@@ -1,5 +1,5 @@
 /*
- * $Id: axis.h,v 1.103.2.3 2015/04/04 01:08:32 sfeam Exp $
+ * $Id: axis.h,v 1.103.2.5 2016/06/14 22:08:10 sfeam Exp $
  *
  */
 
@@ -339,8 +339,11 @@ extern const lp_style_type default_axis_zeroaxis;
 /* default grid linetype, to be used by 'unset grid' and 'reset' */
 extern const struct lp_style_type default_grid_lp;
 
-/* grid layer: -1 default, 0 back, 1 front */
+/* grid layer: LAYER_BEHIND LAYER_BACK LAYER_FRONT */
 extern int grid_layer;
+
+/* Whether to draw the axis tic labels and tic marks in front of everything else */
+extern TBOOLEAN grid_tics_in_front;
 
 /* Whether or not to draw a separate polar axis in polar mode */
 extern TBOOLEAN raxis;
@@ -558,8 +561,6 @@ do {									  \
 	if (axis->link_udf->at) 					  \
 	    curval = eval_link_function(AXIS - SECOND_AXES, curval);	  \
     } 									  \
-    if ( curval < axis->data_min )					  \
-	axis->data_min = curval;					  \
     if ( curval < axis->min						  \
     &&  (curval <= axis->max || axis->max == -VERYLARGE)) {		  \
 	if (axis->autoscale & AUTOSCALE_MIN)	{			  \
@@ -581,8 +582,6 @@ do {									  \
 	    break;							  \
 	}								  \
     }									  \
-    if ( curval > axis->data_max )					  \
-	axis->data_max = curval;					  \
     if ( curval > axis->max						  \
     &&  (curval >= axis->min || axis->min == VERYLARGE)) {		  \
 	if (axis->autoscale & AUTOSCALE_MAX)	{			  \
@@ -603,6 +602,13 @@ do {									  \
 	    OUT_ACTION;							  \
 	}								  \
     }									  \
+    /* Only update data min/max if the point is INRANGE Jun 2016 */	  \
+    if (TYPE == INRANGE) {						  \
+	if (axis->data_min > curval)					  \
+	    axis->data_min = curval;					  \
+	if (axis->data_max < curval)					  \
+	    axis->data_max = curval;					  \
+	}								  \
 } while(0)
 
 /* normal calls go though this macro, marked as not being a color axis */

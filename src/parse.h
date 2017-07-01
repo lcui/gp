@@ -1,5 +1,5 @@
 /*
- * $Id: parse.h,v 1.29.2.1 2014/09/19 06:02:18 sfeam Exp $
+ * $Id: parse.h,v 1.29.2.4 2016/10/18 18:56:52 sfeam Exp $
  */
 
 /* GNUPLOT - parse.h */
@@ -88,18 +88,16 @@ void cleanup_udvlist __PROTO((void));
 /* Code that uses the iteration routines here must provide */
 /* a blank iteration structure to use for bookkeeping.     */
 typedef struct iterator {
-	struct iterator *next;  /* doubly linked list */
-	struct iterator *prev;
+	struct iterator *next;		/* linked list */
 	struct udvt_entry *iteration_udv;
 	char *iteration_string;
 	int iteration_start;
 	int iteration_end;
 	int iteration_increment;
-	int iteration_current;
-	int iteration;
-	TBOOLEAN done;
-	TBOOLEAN really_done;
-	TBOOLEAN empty_iteration;
+	int iteration_current;		/* start + increment * iteration */
+	int iteration;			/* runs from 0 to (end-start)/increment */
+	struct at_type *start_at;	/* expression that evaluates to iteration_start */
+	struct at_type *end_at;		/* expression that evaluates to iteration_end */
 } t_iterator;
 
 extern t_iterator * plot_iterator;	/* Used for plot and splot */
@@ -109,6 +107,7 @@ extern t_iterator * set_iterator;		/* Used by set/unset commands */
 t_iterator * check_for_iteration __PROTO((void));
 TBOOLEAN next_iteration  __PROTO((t_iterator *));
 TBOOLEAN empty_iteration  __PROTO((t_iterator *));
+TBOOLEAN forever_iteration  __PROTO((t_iterator *));
 t_iterator * cleanup_iteration __PROTO((t_iterator *));
 
 void parse_link_via __PROTO((struct udft_entry *));

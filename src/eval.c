@@ -1,5 +1,5 @@
 #ifndef lint
-static char *RCSid() { return RCSid("$Id: eval.c,v 1.119.2.1 2014/12/05 18:09:33 sfeam Exp $"); }
+static char *RCSid() { return RCSid("$Id: eval.c,v 1.119.2.5 2016/10/21 21:00:08 sfeam Exp $"); }
 #endif
 
 /* GNUPLOT - eval.c */
@@ -683,7 +683,7 @@ evaluate_at(struct at_type *at_ptr, struct value *val_ptr)
 }
 
 void
-free_at(struct at_type *at_ptr)
+real_free_at(struct at_type *at_ptr)
 {
     int i;
     /* All string constants belonging to this action table have to be
@@ -697,7 +697,7 @@ free_at(struct at_type *at_ptr)
 	    gpfree_string(&(a->arg.v_arg));
 	/* a summation contains its own action table wrapped in a private udf */
 	if (a->index == SUM) {
-	    free_at(a->arg.udf_arg->at);
+	    real_free_at(a->arg.udf_arg->at);
 	    free(a->arg.udf_arg);
 	}
 #ifdef HAVE_EXTERNAL_FUNCTIONS
@@ -758,6 +758,8 @@ del_udv_by_name(char *key, TBOOLEAN wildcard)
     while (udv_ptr) {
 	/* Forbidden to delete GPVAL_* */
 	if (!strncmp(udv_ptr->udv_name,"GPVAL",5))
+	    ;
+	else if (!strncmp(udv_ptr->udv_name,"GNUTERM",7))
 	    ;
 
  	/* exact match */
@@ -953,6 +955,9 @@ update_gpval_variables(int context)
 	fill_gpval_string("GPVAL_TERMOPTIONS", term_options);
 	fill_gpval_string("GPVAL_OUTPUT", (outstr) ? outstr : "");
 	fill_gpval_string("GPVAL_ENCODING", encoding_names[encoding]);
+	fill_gpval_string("GPVAL_MINUS_SIGN", minus_sign ? minus_sign : "-");
+	fill_gpval_string("GPVAL_MICRO", micro ? micro : "u");
+	fill_gpval_string("GPVAL_DEGREE_SIGN", degree_sign);
     }
 
     /* If we are called from int_error() then set the error state */

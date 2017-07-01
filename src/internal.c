@@ -1,5 +1,5 @@
 #ifndef lint
-static char *RCSid() { return RCSid("$Id: internal.c,v 1.79.2.1 2014/09/09 03:36:48 sfeam Exp $"); }
+static char *RCSid() { return RCSid("$Id: internal.c,v 1.79.2.3 2016/06/14 21:36:00 sfeam Exp $"); }
 #endif
 
 /* GNUPLOT - internal.c */
@@ -1238,13 +1238,16 @@ f_range(union argument *arg)
     gpfree_string(&full);
 }
 
+/* Magic number! */
+#define RETURN_WORD_COUNT (-17*23*61)
+
 void
 f_words(union argument *arg)
 {
     struct value a;
 
-    /* "words(s)" is implemented as "word(s,-1)" */
-    push(Ginteger(&a, -1));
+    /* "words(s)" is implemented as "word(s,RETURN_WORD_COUNT)" */
+    push(Ginteger(&a, RETURN_WORD_COUNT));
     f_word(arg);
 }
 
@@ -1293,13 +1296,15 @@ f_word(union argument *arg)
 	}
     }
 
-    if (ntarget < 0)
-	/* words(s) = word(s,-1) = # of words in string */
+    /* words(s) = word(s,magic_number) = # of words in string */
+    if (ntarget == RETURN_WORD_COUNT)
 	Ginteger(&result, nwords);
 
     push(&result);
     gpfree_string(&a);
 }
+#undef RETURN_WORD_COUNT
+
 
 /* EAM July 2004  (revised to dynamic buffer July 2005)
  * There are probably an infinite number of things that can
@@ -1694,7 +1699,6 @@ void
 f_system(union argument *arg)
 {
     struct value val, result;
-    struct udvt_entry *errno_var;
     char *output;
     int output_len, ierr;
 
@@ -1709,10 +1713,7 @@ f_system(union argument *arg)
     FPRINTF((stderr," f_system input = \"%s\"\n", val.v.string_val));
 
     ierr = do_system_func(val.v.string_val, &output);
-    if ((errno_var = add_udv_by_name("ERRNO"))) {
-	errno_var->udv_undef = FALSE;
-	Ginteger(&errno_var->udv_value, ierr);
-    }
+    fill_gpval_integer("GPVAL_ERRNO", ierr);
     output_len = strlen(output);
 
     /* chomp result */

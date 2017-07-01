@@ -1,5 +1,5 @@
 /* Hello, Emacs: this is -*-C-*- !
- * $Id: post.trm,v 1.288 2014/06/10 19:55:18 sfeam Exp $
+ * $Id: post.trm,v 1.288.2.3 2016/08/17 17:09:49 sfeam Exp $
  */
 
 /* GNUPLOT - post.trm */
@@ -292,6 +292,8 @@ static TBOOLEAN ps_explicit_size = FALSE;
 static size_units ps_explicit_units = INCHES;
 static int eps_explicit_x = 0;
 static int eps_explicit_y = 0;
+
+static TBOOLEAN PS_border = FALSE;
 
 #define DOTS_PER_INCH (300)    /* resolution of printer we expect to use */
 
@@ -1767,9 +1769,25 @@ end\n\
 	    fprintf(gppsfile,"%s",OldEPSL_linetypes[i]);
     }
 
-    if (ps_params->duplex_option)
-	fprintf(gppsfile, "statusdict begin %s setduplexmode end\n",
+    /* The use of statusdict and setduplexmode is not 'Standard'  */
+    /* PostScript.  This method is used in Level 1 as a means of  */
+    /* controlling device properties, and is device specific.     */
+    /* Level 2/3 PostScript performs these functions via          */
+    /* setpagedevice.  See PostScript Language Reference 3rd Ed.  */
+    /* pages 426-32 and 679-80 for details.  The code below just  */
+    /* makes the passing of _simplex_ work across levels 1-3 and  */
+    /* the matter of Duplex and Tumble is left to others.         */
+    /* Be aware that BRscript3 is not happy if presented with a   */
+    /* single page and Duplex is forced on, whereas the Xerox     */
+    /* Phaser 8560 sees there is only one page and uses simplex.  */
+
+    if (ps_params->duplex_option) {
+	if (ps_params->level1 )
+	    fprintf(gppsfile, "statusdict begin %s setduplexmode end\n",
 		ps_params->duplex_state ? "true" : "false");
+	else if (!ps_params->duplex_state) fprintf(gppsfile,
+	    "%%%%BeginFeature: *Duplex Simplex\n << /Duplex false >> setpagedevice\n%%%%EndFeature\n");
+    }
 
     if (dict)
 	while (*dict)
@@ -1805,8 +1823,6 @@ end\n\
 	    free(outstr2);
     }
 
-    fputs("end\n", gppsfile);
-
 #ifdef EAM_BOXED_TEXT
     /* Define macros supporting boxed text */
     fprintf(gppsfile, psi4);
@@ -1814,6 +1830,13 @@ end\n\
     fputs("/textshow { Gshow } def\n",gppsfile);
 #endif
 
+    /* version 5.0.2:  These revised definitions are now in prologue.ps but we */
+    /* add them here also so that updating to 5.0.2 does not break previous    */
+    /* local customizations of the original version 5.0 prologue.ps. */
+    fputs("% redundant definitions for compatibility with prologue.ps older than 5.0.2\n", gppsfile);
+    fputs("/LTB {BL [] LCb DL} def\n/LTb {PL [] LCb DL} def\n", gppsfile);
+
+    fputs("end\n", gppsfile);
     fputs("%%EndProlog\n", gppsfile);
 }
 
@@ -2003,7 +2026,10 @@ PS_linetype(int linetype)
 
     PS_linetype_last = linetype;
     PS_linewidth_last = PS_linewidth_current;
-    fprintf(gppsfile, "LT%c\n", "wba012345678"[linetype]);
+    if (PS_border && linetype == 1)
+	fprintf(gppsfile, "LTB\n");
+    else
+	fprintf(gppsfile, "LT%c\n", "wba012345678"[linetype]);
     ps_path_count = 0;
 }
 
@@ -2025,9 +2051,10 @@ PS_dashtype(int type, t_dashtype *custom_dash_type)
     case DASHTYPE_CUSTOM:
 		PS_FLUSH_PATH;
 		fprintf(gppsfile, "[");
-		for (i = 0; custom_dash_type->pattern[i] > 0; i++)
+		for (i = 0; i < DASHPATTERN_LENGTH && custom_dash_type->pattern[i] > 0; i++) {
 		    fprintf(gppsfile, "%.1f dl%d ", 
 			custom_dash_type->pattern[i] * empirical_scale, i%2 + 1);
+		}
 		fprintf(gppsfile, "] 0 setdash\n");
 		break;
     default:
@@ -4285,6 +4312,14 @@ PS_layer(t_termlayer syncpoint)
 	
 	case TERM_LAYER_END_PM3D_MAP:
 		fprintf(gppsfile, "%%pm3d_map_end\n");
+		break;
+
+	case TERM_LAYER_BEGIN_BORDER:
+		PS_border = TRUE;
+		break;
+	
+	case TERM_LAYER_END_BORDER:
+		PS_border = FALSE;
 		break;
 	
 	case TERM_LAYER_RESET:

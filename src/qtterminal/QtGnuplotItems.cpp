@@ -70,6 +70,7 @@ void QtGnuplotEnhanced::addText(const QString& fontName, double fontSize,
 	}
 	font.setStyle(fontStyle);
 	font.setWeight(fontWeight);
+	font.setStyleStrategy(QFont::ForceOutline);	// pcf fonts die if rotated
 	QtGnuplotEnhancedFragment* item = new QtGnuplotEnhancedFragment(font, text, this);
 	item->setPos(m_currentPos + QPointF(0., -base));
 	if (showFlag)
@@ -79,12 +80,12 @@ void QtGnuplotEnhanced::addText(const QString& fontName, double fontSize,
 
 	if (overprint == 2)                         // Overprint
 	{
-		item->setPos(QPointF((m_overprintPos + m_currentPos.x())/2. - (item->boundingRect().right() + item->boundingRect().left())/2., -base));
+		item->setPos(QPointF((m_overprintPos + m_currentPos.x())/2. - item->width()/2., -base));
 		m_overprintMark = false;
 	}
 
 	if (widthFlag && (overprint != 2))
-		m_currentPos += QPointF(item->boundingRect().right(), 0.);
+		m_currentPos += QPointF(item->width(), 0.);
 }
 
 void QtGnuplotEnhanced::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, QWidget* widget)
@@ -105,6 +106,12 @@ QRectF QtGnuplotEnhancedFragment::boundingRect() const
 {
 	QFontMetricsF metrics(m_font);
 	return metrics.boundingRect(m_text);
+}
+
+qreal QtGnuplotEnhancedFragment::width() const
+{
+	QFontMetricsF metrics(m_font);
+	return metrics.width(m_text);
 }
 
 void QtGnuplotEnhancedFragment::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, QWidget* widget)
@@ -154,10 +161,11 @@ void QtGnuplotPoint::paint(QPainter* painter, const QStyleOptionGraphicsItem* op
 
 void QtGnuplotPoint::drawPoint(QPainter* painter, const QPointF& origin, double size, int style)
 {
-	// painter->drawPoint(origin);
-
-	if (style == -1)
+	if (style == -1) // dot
+	{
+		painter->drawPoint(origin);
 		return;
+	}
 
 	if ((style == 0) || (style == 2)) // plus or star
 	{

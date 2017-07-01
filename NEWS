@@ -1,5 +1,130 @@
-Changes since 5.0 release
-=========================
+Changes in 5.0.6
+================
+* NEW command 'set micro' enables encoding-specific char for gprintf %c format
+* NEW command 'set datafile missing NaN' treats invalid data as if it were missing
+* NEW backport updated svg/domterm terminal from development version
+* CHANGE - start/end limits in nested iterations are reevaluated dynamically
+* CHANGE - revised adjustment of x2label and plot title when x2tics are present
+* CHANGE - mark non-free pdf terminal DEPRECATED (to be removed in release 5.2)
+* CHANGE - allow fractional font sizes for gdlib terminals
+* CHANGE - do not allow inverted R axis (requires support not backported from 5.1)
+* CHANGE - allow pointinterval property in 'with lp' for splot as well as for plot
+* CHANGE - "linewidth <lw>" is accepted as a terminal option for aquaterm, qt, wxt
+* CHANGE - spline segments outside xrange are ignored rather than treated as errors
+* FIX assignment of x/y dimensions in "binary record=(a,b) ... with image"
+* FIX wxt - multithreaded wxt was faulting during resize (mutex lock failure)
+* FIX windows - timed pause only worked for intervals < 1 second
+* FIX Front/back layering of border+grid lines was not always correct in hidden3d
+* FIX "set pm3d depthorder interpolate N,M" memory allocation failure
+* FIX aquaterm failed to honor request to disable enhanced text markup
+* FIX save and show commands failed to list linecolor for lines with "lt -1"
+* FIX the "missing" data flag is honored by "using ($n)" as it is for "using n"
+* FIX error reporting of line number inside a bracketed clause
+* FIX gnuplot_x11: possible fix for sporadic use-after-free error
+* FIX initialization of hidden3d structures for splot with dots
+* FIX track arrowhead properties in hidden3d mode
+* FIX tracking of NaN values from function evaluated during binary data input
+* FIX 3D rotation does not clobber hidden/visible status of plots
+
+Changes in 5.0.5
+================
+* NEW allow filename completion for system commands and pipes (backport from 5.1)
+* NEW option to plot "with labels ... {rotate variable}"
+* NEW command "set minussign"
+* NEW stats command "name" option now accepts "columnheader" or "columnheader(N)"
+* NEW command option "set colorbox invert"
+* CHANGE qt terminal force selection of outline font rather than bitmap font
+* CHANGE post terminal simplex/duplex output depends on PostScript level setting
+* CHANGE improved autoscaling of plot "with boxes"
+* CHANGE qt terminal sets TERM_POLYGON_PIXELS to avoid aliasing artifacts
+* CHANGE all stats and fit commands skip header records if "autotitle columnhead"
+* FIX Do not confuse EOF with 8-bit character 0x177 (E.g. in Cyrillic encodings).
+* FIX use blank line rather than 'u' flag in "set table" output of smoothed data
+* FIX order dependence of "fillcolor" keyword in plot commands
+* FIX svg - better vertical justification of rotated text
+* FIX wxt - file export widget correctly handles inactive plots
+* FIX epslatex - reset linetype between plots (needed if plotted "notitle")
+* FIX qt - leading or trailing whitespace in enhanced text was being ignored
+* FIX regression in rendering 'plot ... matrix every ... with image'
+
+Changes in 5.0.4
+================
+* CHANGE minimum linewidth of all cairo terminals is now 0.2 pt
+* CHANGE in-line datablock lines are not limited to 1024 characters
+* CHANGE do not truncate or renumber history items in the active session
+* CHANGE (Windows only) open piped output using mode "wb" rather than "w"
+* CHANGE backport 5.1 use of "lc variable" to color boxplot factors
+* CHANGE gnuplot_svg.js now remaps coords for svg image embedded in larger object
+* CHANGE disallow "set palette maxcolors 1" (which has never worked)
+* CHANGE data-input errors in "stats" now generate a warning rather than an error
+* FIX placement of objects and labels using linked secondary axis coordinates
+* FIX 'set term qt <N> close' acts immediately rather than after next mouse event
+* FIX emf terminal could lose track of bold/italic/etc font properties
+* FIX emf terminal text placement of UTF-8 strings
+* FIX regression that caused "set log x; plot '-'; replot" to mess up autoscaling
+* FIX regression in v5 that mangled 3D arrows defined by "from ... rto ..."
+* FIX transposition of row/column count in plotting ascii x/y/z data "with image"
+* FIX 7-column input to "splot ... with vectors"
+* FIX ignore incomplete "every" spec for image plots
+* FIX placement of xyplane does not depend on having tics or grid lines enabled
+* FIX early program exit on replot+resize with inline data
+* FIX bad plot iteration with negative increment, e.g. plot for [i=9:1:-1] foo(i)
+* FIX smoothed curves could not be plotted as filledcurves; now they can be
+* FIX win terminal apply color to enhanced text
+* FIX aquaterm slow rendering of images with keyword "pixels"
+
+Changes in 5.0.3
+================
+* NEW open-ended iteration over data:  plot for [i=1:*] datafile index i
+* CHANGE aquaterm support for version 5 custom dashtypes
+* CHANGE backport new image bookkeeping from 5.1 to fix bugs #1607 #1703 #1709
+* CHANGE qt terminal: toggle plots on/off only on left-click
+* CHANGE wholesale upgrade of old tkcanvas terminal (version 3.7 -> version 5.0)
+* FIX reevaluate fill color for each polygon in data for "with filledcurves"
+* FIX multiple wxt terminal font problems
+
+Changes in 5.0.2
+================
+* NEW support "set clip {one|two}" in 3D vector plots (splot ... with vectors)
+* CHANGE post.trm treats lt -1 as double width only when drawing the plot border
+* CHANGE distinguish between empty string variable and string constant ""
+* CHANGE preserve full precision of samples generated by '+' or '++'
+* CHANGE dumb terminal now handles UTF-8 characters
+* CHANGE "plot for [i=1:n] foo=i, x*foo" generates n plots (comma is ignored)
+* CHANGE accept '\r' as a terminator after console prompt (Windows only)
+* CHANGE use the same arrowhead style in the key sample as in the plot itself
+* CHANGE the command "set tics {front|back}" no longer affects grid lines also
+* CHANGE allow "noautoscale" keyword for 2D function plots
+* CHANGE "unset mono" clears current terminal setting as well as future behavior
+* FIX dashtype labels in 'test' command were off by one
+* FIX autocalculation of box widths in the presence of NaN data values
+* FIX qt terminals dots were invisible
+* FIX point and impulse colors in 3D binary plots
+* FIX enable dashtype processing for epslatex terminal
+* FIX clean handling of unexpected input commands or data found by fuzz-testing
+* FIX many places where corrupt input commands or data could trigger a crash
+* FIX aquaterm fill area with transparency
+* FIX "offset 0" means "no offset" even in the case of log-scaled axes
+* FIX handle formatted read from a datablock
+* FIX "pause mouse" for wxt terminal (OSX, other single-threaded platforms)
+* FIX 2-column data plots "with filledcurve y=<value>"
+* FIX handling outliers in boxplot with categories (i.e. level in column 4)
+* FIX inline input format in `splot` command
+* FIX order-dependence of optional keywords for "set key" and "set obj polygon"
+* FIX lua/tikz text placement errors on OSX 10.10.2 with lua5.3
+* FIX B and L formats in gprintf()
+* FIX bug parsing time input with format "%s" (extra fractional second)
+* FIX incorrect average value in final bin of "smooth cnorm" calculation
+* FIX handle log-scale y values when calculating monotonic cubic spline fit
+* FIX "set clip points" was non-functional in version 5.0
+* FIX regression in 5.0.1 that left extraneous '@' in title columnhead(N)
+* FIX vertical placement of text fragments by cairo terminals
+* FIX "set [*]axis rangelimited" applies to minor as well as major tics
+* FIX qt terminal could drop chars from stdin depending on external event timing
+* FIX overlong custom dash pattern could generate a corrupt postscript file
+
+Changes in 5.0.1
+================
 * NEW "set mono" (full command "set monochrome {linetype lt <line-properties>})
 * NEW "set fit nolog" suppresses output to log file
 * NEW sixel terminal supports RGB and palette colors, but only 16 at a time :-(

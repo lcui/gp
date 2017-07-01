@@ -1,5 +1,5 @@
 /* Hello, Emacs, this is -*-C-*-
- * $Id: pslatex.trm,v 1.90.2.1 2015/01/24 22:01:28 sfeam Exp $
+ * $Id: pslatex.trm,v 1.90.2.7 2017/01/23 21:30:09 sfeam Exp $
  */
 
 /* GNUPLOT - pslatex.trm */
@@ -141,8 +141,10 @@ TERM_PUBLIC void cairotrm_set_color __PROTO ((t_colorspec *colorspec));
 
 /* State variables for boxed text */
 static TBOOLEAN PSLATEX_inbox = FALSE;
+static TBOOLEAN PSLATEX_saved = FALSE;
 static int PSLATEX_xbox, PSLATEX_ybox;
-
+static double PSLATEX_xmargin = 1.0;
+static double PSLATEX_ymargin = 1.0;
 
 /* Common functions for epslatex and ps(la)tex */
 
@@ -401,6 +403,7 @@ PSTEX_text()
 /* Functions for epslatex */
 
 /* the common init function for the epslatex driver */
+/* used by pslatex epslatex cairolatex */
 TERM_PUBLIC void
 EPSLATEX_common_init()
 {
@@ -468,6 +471,10 @@ EPSLATEX_common_init()
         case S_ENC_KOI8_U:
             inputenc = "koi8-u";
             break;
+	case S_ENC_UTF8:
+	    /* utf8x (not utf8) is needed to pick up degree and micro signs */
+	    inputenc = "utf8x";
+	    break;
         case S_ENC_INVALID:
             int_error(NO_CARET, "invalid input encoding used");
             break;
@@ -537,6 +544,7 @@ EPSLATEX_common_init()
 
             fputs("\
 % Load packages\n\
+\\usepackage{calc}\n\
 \\usepackage{graphicx}\n\
 \\usepackage{color}\n", gpoutfile);
 
@@ -593,7 +601,7 @@ EPSLATEX_common_init()
 
         fputs("\\begingroup\n", gpoutfile);
         
-        if (inputenc)
+        if (inputenc && encoding != S_ENC_UTF8)
             fprintf(gpoutfile, "\
   %% Encoding inside the plot.  In the header of your document, this encoding\n\
   %% should to defined, e.g., by using\n\
@@ -750,9 +758,18 @@ EPSLATEX_put_text(unsigned int x, unsigned int y, const char *str)
 	    tex_color_synced = TRUE;
 	}
 	if (PSLATEX_inbox) {
-	    fprintf(gpoutfile, "      \\savebox{\\gptboxtext}{%s}\n", str);
+	    if (PSLATEX_saved)
+		return;
+	    fprintf(gpoutfile,
+		"      \\settowidth{\\gptboxwidth}{\\widthof{%s}}\n", str);
+	    fprintf(gpoutfile, "\t\\advance\\gptboxwidth by %d\\fboxsep\n",
+		(int)(2. * PSLATEX_xmargin + 0.5));
+	    fprintf(gpoutfile,
+		"      \\savebox{\\gptboxtext}{\\parbox[c][\\totalheight+%d\\fboxsep]{\\gptboxwidth}{\\centering{%s}}}\n", 
+		(int)(2. * PSLATEX_ymargin + 0.5), str);
 	    PSLATEX_xbox = x;
 	    PSLATEX_ybox = y;
+	    PSLATEX_saved = TRUE;
 	} else {
 	    fprintf(gpoutfile, "      \\put(%d,%d){", x, y);
 	    if (ps_ang)
@@ -927,10 +944,24 @@ EPSLATEX_linetype(int linetype)
 TERM_PUBLIC void
 EPSLATEX_layer(t_termlayer syncpoint)
 {
+    static int plotno = 0;
+
     switch (syncpoint) {
+
+    case TERM_LAYER_BEFORE_PLOT:
+	if (!ISCAIROTERMINAL)
+	    fprintf(gppsfile, "%% Begin plot #%d\n", ++plotno);
+	break;
+    
+    case TERM_LAYER_AFTER_PLOT:
+	PS_linetype(LT_UNDEFINED);	/* Forces a stroke and resets linetype */
+	if (!ISCAIROTERMINAL)
+	    fprintf(gppsfile, "%% End plot #%d\n", plotno);
+	break;
 
     case TERM_LAYER_RESET:        /* Start of plot; reset flag */
 	epslatex_text_layer = 0;
+	plotno = 0;
 	break;
 
     case TERM_LAYER_BACKTEXT: /* Start of "back" text layer */
@@ -960,11 +991,13 @@ EPSLATEX_layer(t_termlayer syncpoint)
 	break;
 
     case TERM_LAYER_BEGIN_PM3D_MAP:
+	if (!ISCAIROTERMINAL)
 	if (gppsfile && (gppsfile != gpoutfile))
 	    fprintf(gppsfile, "%%pm3d_map_begin\n");
 	break;
     
     case TERM_LAYER_END_PM3D_MAP:
+	if (!ISCAIROTERMINAL)
 	if (gppsfile && (gppsfile != gpoutfile))
 	    fprintf(gppsfile, "%%pm3d_map_end\n");
 	break;
@@ -985,6 +1018,7 @@ EPSLATEX_boxed_text(unsigned int x, unsigned int y, int option)
     case TEXTBOX_INIT:
 	/* Initialize bounding box for this text string */
 	PSLATEX_inbox = TRUE;
+	PSLATEX_saved = FALSE;
 	break;
     case TEXTBOX_FINISH:
 	PSLATEX_inbox = FALSE;
@@ -1025,14 +1059,15 @@ EPSLATEX_boxed_text(unsigned int x, unsigned int y, int option)
 	    fprintf(gpoutfile, "{\\colorbox{white}{\\usebox{\\gptboxtext}}}}\n");
 	    break;
 	}
+	break;
     case TEXTBOX_MARGINS:
+	PSLATEX_xmargin = (double)x / 100.;
+	PSLATEX_ymargin = (double)y / 100.;
 	break;
     default:
 	break;
     }
 }
-#else
-#define EPSLATEX_boxed_text
 #endif
 
 #endif /* TERM_BODY */
@@ -1066,7 +1101,11 @@ TERM_TABLE_START(epslatex_driver)
     PS_path,
     0.0,	/* scale */
     0,		/* hypertext */
-    EPSLATEX_boxed_text
+#ifdef EAM_BOXED_TEXT
+    EPSLATEX_boxed_text,
+#endif
+    NULL,
+    PS_dashtype
 TERM_TABLE_END(epslatex_driver)
 #undef LAST_TERM
 #define LAST_TERM epslatex_driver

@@ -1,5 +1,5 @@
 #ifndef lint
-static char *RCSid() { return RCSid("$Id: term.c,v 1.296.2.16 2015/04/20 21:37:09 sfeam Exp $"); }
+static char *RCSid() { return RCSid("$Id: term.c,v 1.296.2.22 2016/04/15 18:00:40 sfeam Exp $"); }
 #endif
 
 /* GNUPLOT - term.c */
@@ -201,7 +201,7 @@ TBOOLEAN ignore_enhanced_text = FALSE;
 
 /* Recycle count for user-defined linetypes */
 int linetype_recycle_count = 0;
-int mono_recycle_count = 4;
+int mono_recycle_count = 0;
 
 
 /* Internal variables */
@@ -377,7 +377,15 @@ term_set_output(char *dest)
 #if defined(PIPES)
 	if (*dest == '|') {
 	    restrict_popen();
-	    if ((f = popen(dest + 1, POPEN_MODE)) == (FILE *) NULL)
+#ifdef _Windows
+	    if (term && (term->flags & TERM_BINARY))
+		f = popen(dest + 1, "wb");
+	    else
+		f = popen(dest + 1, "w");
+#else
+	    f = popen(dest + 1, "w");
+#endif
+	    if (f == (FILE *) NULL)
 		os_error(c_token, "cannot create pipe; output not changed");
 	    else
 		output_pipe_open = TRUE;
@@ -1418,8 +1426,7 @@ set_term()
     if (!END_OF_COMMAND) {
 	input_name = gp_input_line + token[c_token].start_index;
 	t = change_term(input_name, token[c_token].length);
-	if (!t && isstringvalue(c_token)) {
-	    input_name = try_to_get_string();  /* Cannot fail if isstringvalue succeeded */
+	if (!t && isstringvalue(c_token) && (input_name = try_to_get_string())) {
 	    t = change_term(input_name, strlen(input_name));
 	    free(input_name);
 	} else {
@@ -1687,7 +1694,7 @@ test_term()
     struct termentry *t = term;
     const char *str;
     int x, y, xl, yl, i;
-    unsigned int xmax_t, ymax_t, x0, y0;
+    int xmax_t, ymax_t, x0, y0;
     char label[MAX_ID_LEN];
     int key_entry_height;
     int p_width;
@@ -1700,10 +1707,10 @@ test_term()
 
     term_start_plot();
     screen_ok = FALSE;
-    xmax_t = (unsigned int) (t->xmax * xsize);
-    ymax_t = (unsigned int) (t->ymax * ysize);
-    x0 = (unsigned int) (xoffset * t->xmax);
-    y0 = (unsigned int) (yoffset * t->ymax);
+    xmax_t = (t->xmax * xsize);
+    ymax_t = (t->ymax * ysize);
+    x0 = (xoffset * t->xmax);
+    y0 = (yoffset * t->ymax);
 
     p_width = pointsize * t->h_tic;
     key_entry_height = pointsize * t->v_tic * 1.25;
@@ -1882,7 +1889,7 @@ test_term()
     for (i=1; i<7; i++) {
 	(*t->linewidth) ((float)(i)); (*t->linetype)(LT_BLACK);
 	(*t->move) (x, y); (*t->vector) (x+xl, y);
-	sprintf(label,"  lw %1d%c",i,0);
+	sprintf(label,"  lw %1d", i);
 	(*t->put_text) (x+xl, y, label);
 	y += yl;
     }
@@ -1901,7 +1908,7 @@ test_term()
 	(*t->dashtype) (i, NULL); 
 	(*t->set_color)(&black);
 	(*t->move) (x, y); (*t->vector) (x+xl, y);
-	sprintf(label,"  dt %1d%c",i,0);
+	sprintf(label,"  dt %1d", i+1);
 	(*t->put_text) (x+xl, y, label);
 	y += yl;
     }
@@ -1927,7 +1934,7 @@ test_term()
 	(*t->vector)(x+xl,y);
 	(*t->vector)(x,y);
 	closepath();
-	sprintf(label,"%2d",i);
+	sprintf(label, "%2d", i);
 	(*t->put_text)(x+xl/2, y+yl+t->v_char*0.5, label);
 	x += xl * 1.5;
     }
@@ -2826,14 +2833,14 @@ recycle:
 		return;
 	    }
 	}
-#if (0)
+
 	/* This linetype wasn't defined explicitly.		*/
 	/* Should we recycle one of the first N linetypes?	*/
 	if (tag > mono_recycle_count && mono_recycle_count > 0) {
 	    tag = (tag-1) % mono_recycle_count + 1;
 	    goto recycle;
 	}
-#endif
+
 	return;
     }
 
@@ -2881,6 +2888,29 @@ recycle:
     lp->pm3d_color.lt = lp->l_type;
     lp->d_type = DASHTYPE_SOLID;
     lp->p_type = (tag <= 0) ? -1 : tag - 1;
+}
+
+/*
+ * Version 5 maintains a parallel set of linetypes for "set monochrome" mode.
+ * This routine allocates space and initializes the default set.
+ */
+void
+init_monochrome()
+{
+    struct lp_style_type mono_default[] = DEFAULT_MONO_LINETYPES;
+
+    if (first_mono_linestyle == NULL) {
+	int i, n = sizeof(mono_default) / sizeof(struct lp_style_type);
+	struct linestyle_def *new;
+	/* copy default list into active list */
+	for (i=n; i>0; i--) {
+	    new = gp_alloc(sizeof(struct linestyle_def), NULL);
+	    new->next = first_mono_linestyle;
+	    new->lp_properties = mono_default[i-1];
+	    new->tag = i;
+	    first_mono_linestyle = new;
+	}
+    }
 }
 
 /*

@@ -1,5 +1,5 @@
 #ifndef lint
-static char *RCSid() { return RCSid("$Id: hidden3d.c,v 1.99.2.5 2015/05/05 19:01:16 sfeam Exp $"); }
+static char *RCSid() { return RCSid("$Id: hidden3d.c,v 1.99.2.8 2017/02/15 21:19:52 sfeam Exp $"); }
 #endif
 
 /* GNUPLOT - hidden3d.c */
@@ -1116,14 +1116,15 @@ build_networks(struct surface_points *plots, int pcount)
 	    nv += 2 * nverts;
 	    ne += nverts;
 	    break;
-	case DOTS:
-	    this_plot->lp_properties.flags |= LP_SHOW_POINTS;
-	    this_plot->lp_properties.p_type = -1;
 	case IMAGE:
 	case RGBIMAGE:
 	case RGBA_IMAGE:
 	    /* Ignore these */
 	    break;
+	case DOTS:
+	    this_plot->lp_properties.flags |= LP_SHOW_POINTS;
+	    this_plot->lp_properties.p_type = -1;
+	    /* fall through */
 	case POINTSTYLE:
 	default:
 	    /* treat all remaining ones like 'points' */
@@ -1165,11 +1166,11 @@ build_networks(struct surface_points *plots, int pcount)
 	if (this_plot->plot_type == NODATA)
 	    continue;
 
-	crvlen = this_plot->iso_crvs->p_count;
-
 	/* Allow individual plots to opt out of hidden3d calculations */
 	if (this_plot->opt_out_of_hidden3d)
 	    continue;
+
+	crvlen = this_plot->iso_crvs->p_count;
 
 	/* We can't use the linetype passed to us, because it has been through */
 	/* load_linetype(), which replaced the nominal linetype with the one   */
@@ -1204,7 +1205,8 @@ build_networks(struct surface_points *plots, int pcount)
 		this_plot->arrow_properties.head_length= 1;
 		this_plot->arrow_properties.head_angle = 0;
 	    }
-	    apply_3dhead_properties(&(this_plot->arrow_properties));
+	    /* NB: It would not work to apply arrowhead properties now */
+	    /* because hidden3d code mixes arrows from multiple plots. */
 	}
 
 	/* HBB 20000715: new initialization code block for non-grid
@@ -1245,9 +1247,13 @@ build_networks(struct surface_points *plots, int pcount)
 
 		} else for (i = 0; i < icrvs->p_count; i++) {
 		    long int thisvertex, basevertex;
+		    int interval = this_plot->lp_properties.p_interval;
 
-		    thisvertex = store_vertex(points + i, lp,
-					      color_from_column);
+		    /* NULL lp means don't draw a point at this vertex */
+		    if (this_plot->plot_style == LINESPOINTS && interval && (i % interval))
+			thisvertex = store_vertex(points + i, NULL, color_from_column);
+		    else
+			thisvertex = store_vertex(points + i, lp, color_from_column);
 
 		    if (this_plot->plot_style == VECTOR) {
 			store_vertex(icrvs->next->points+i, 0, 0);
@@ -1776,6 +1782,13 @@ draw_edge(p_edge e, p_vertex v1, p_vertex v2)
 	} else {
 	    if (e->v1 == v1-vlist && e->v2 != v2-vlist)
 		lptemp.p_type = 0;
+	}
+	if (lptemp.p_type == PT_BACKARROW || lptemp.p_type == PT_ARROWHEAD) {
+	    /* FIXME: e->lp points to this_plot->lp_properties but what we need is */
+	    /* a pointer to the immediately following field e->arrow_properties.   */
+	    lp_style_type *lp = e->lp;
+	    arrow_style_type *as = (arrow_style_type *)(&lp[1]);
+	    apply_3dhead_properties(as);
 	}
     }
 

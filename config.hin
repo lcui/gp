@@ -136,7 +136,7 @@
 /* Define to include support for gpic terminal */
 #undef HAVE_GPIC
 
-/* Define to use gtk/gdk tweaks */
+/* define if your wxWidgets uses the gtk toolkit */
 #undef HAVE_GTK
 
 /* define if you have libiconv and iconv.h */
@@ -486,6 +486,9 @@
 
 /* Define if you want the Qt terminal. */
 #undef QTTERM
+
+/* only used for docs */
+#undef QTVER
 
 /* Define if you want to use the included readline function. */
 #undef READLINE

@@ -1,5 +1,5 @@
 #ifndef lint
-static char *RCSid() { return RCSid("$Id: fit.c,v 1.145.2.11 2015/06/07 15:19:59 sfeam Exp $"); }
+static char *RCSid() { return RCSid("$Id: fit.c,v 1.145.2.16 2016/05/13 17:28:17 markisch Exp $"); }
 #endif
 
 /*  NOTICE: Change of Copyright Status
@@ -400,6 +400,12 @@ error_ex(int t_num, const char *str, ...)
     /* restore original SIGINT function */
     interrupt_setup();
 
+    /* FIXME: It would be nice to exit the "fit" command non-fatally, */
+    /* so that the script who called it can recover and continue.     */
+    /* int_error() makes that impossible.  But if we use int_warn()   */
+    /* instead the program tries to continue _inside_ the fit, which  */
+    /* generally then dies on some more serious error.                */
+
     /* exit via int_error() so that it can clean up state variables */
     int_error(t_num, buf);
 }
@@ -659,8 +665,7 @@ call_gnuplot(const double *par, double *data)
 	             fit_x[i * num_indep + j], 0.0);
 	evaluate_at(func.at, &v);
 
-	data[i] = real(&v);
-	if (undefined || isnan(data[i])) {
+	if (undefined || isnan(real(&v))) {
 	    /* Print useful info on undefined-function error. */
 	    Dblf("\nCurrent data point\n");
 	    Dblf("=========================\n");
@@ -679,6 +684,8 @@ call_gnuplot(const double *par, double *data)
 		Eex("Function evaluation yields NaN (\"not a number\")");
 	    }
 	}
+
+	data[i] = real(&v);
     }
 }
 
@@ -2132,11 +2139,15 @@ fit_command()
 	free(line);
 	for (i = 0; (i < num_indep) && (i < columns - 1); i++)
 	    fprintf(log_f, "%s:", c_dummy_var[i]);
-	if (num_errors > 0)
+	fprintf(log_f, "z");
+	if (num_errors > 0) {
 	    for (i = 0; (i < num_indep) && (i < columns - 1); i++)
 		if (err_cols[i])
-		    fprintf(log_f, "s%s:", c_dummy_var[i]);
-	fprintf(log_f, (num_errors == 0) ? "z\n" : "z:s\n");
+		    fprintf(log_f, ":s%s", c_dummy_var[i]);
+	    fprintf(log_f, ":s\n");
+	} else {
+	    fprintf(log_f, "\n");
+	}
     }
 
     /* report all range specs, starting with Z */
@@ -2168,19 +2179,12 @@ fit_command()
 
     while ((i = df_readline(v, num_indep + num_errors + 1)) != DF_EOF) {
         if (num_data >= max_data) {
-	    /* increase max_data by factor of 1.5 */
-	    max_data = (max_data * 3) / 2;
-	    if (0
-		|| !redim_vec(&fit_x, max_data * num_indep)
-		|| !redim_vec(&fit_z, max_data)
-		|| !redim_vec(&err_data, max_data * GPMAX(num_errors, 1))
-		) {
+	    max_data *= 2;
+	    if (!redim_vec(&fit_x, max_data * num_indep) ||
+		!redim_vec(&fit_z, max_data) ||
+		!redim_vec(&err_data, max_data * GPMAX(num_errors, 1))) {
 		/* Some of the reallocations went bad: */
 		Eex2("Out of memory in fit: too many datapoints (%d)?", max_data);
-	    } else {
-		/* Just so we know that the routine is at work: */
-		fprintf(STANDARD, "Max. number of data points scaled up to: %d\n",
-			max_data);
 	    }
 	} /* if (need to extend storage space) */
 
@@ -2204,6 +2208,8 @@ fit_command()
 	case DF_SECOND_BLANK:
 	    continue;
 	case DF_COLUMN_HEADERS:
+	    continue;
+	case DF_FOUND_KEY_TITLE:
 	    continue;
 	case 0:
 	    Eex2("bad data on line %d of datafile", df_line_number);
@@ -2363,11 +2369,11 @@ fit_command()
 
 	static char *viafile = NULL;
 	free(viafile);			/* Free previous name, if any */
-	viafile = try_to_get_string();	/* Cannot fail since isstringvalue succeeded */
+	viafile = try_to_get_string();
+	if (!viafile || !(f = loadpath_fopen(viafile, "r")))
+	    Eex2("could not read parameter-file \"%s\"", viafile);
 	if (!fit_suppress_log)
 	    fprintf(log_f, "fitted parameters and initial values from file: %s\n\n", viafile);
-	if (!(f = loadpath_fopen(viafile, "r")))
-	    Eex2("could not read parameter-file \"%s\"", viafile);
 
 	/* get parameters and values out of file and ignore fixed ones */
 

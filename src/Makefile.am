@@ -64,13 +64,11 @@ pkglibexec_PROGRAMS =
 
 if BUILD_GNUPLOT_X11
 pkglibexec_PROGRAMS += gnuplot_x11
-gnuplot_x11_SOURCES = gplt_x11.c gplt_x11.h gpexecute.c gpexecute.h mousecmn.h version.c version.h
+gnuplot_x11_SOURCES = gplt_x11.c gplt_x11.h gpexecute.c getcolor.c getcolor.h gpexecute.h mousecmn.h version.c version.h
+gnuplot_x11_CPPFLAGS = -DGPLT_X11_MODE $(AM_CPPFLAGS)
 XLIBS = @LIBRARIES_FOR_X@
-gnuplot_x11_LDADD = getcolor_x11.o $(XLIBS)
+gnuplot_x11_LDADD = $(XLIBS)
 endif
-
-getcolor_x11.o: getcolor.c
-	$(COMPILE) -c -DGPLT_X11_MODE -o getcolor_x11.o $(srcdir)/getcolor.c
 
 bf_test_SOURCES = bf_test.c
 bf_test_LIBS = -lm
@@ -115,6 +113,10 @@ timestamp.h: $(top_srcdir)/ChangeLog Makefile
 
 if BUILD_QT
 
+GNUPLOT_QT = `echo gnuplot_qt | sed '$(transform)'`$(EXEEXT)
+
+AM_CPPFLAGS += -DGNUPLOT_QT=\"$(GNUPLOT_QT)\"
+
 # Call the moc preprocessor
 qtterminal/moc_%.cpp : qtterminal/%.h
 	$(MOC) -o $@ $<
@@ -147,9 +149,10 @@ endif # HAVE_LRELEASE
 clean-qt-extra:
 	rm -vf qtterminal/moc_*.cpp qtterminal/qrc_*.cpp qtterminal/qrc_*.o ui_*.h qtgnuplot*.qm
 
-# Clean transform gnuplot_x11 for demo
+
+# Clean transform gnuplot_qt for demo
 clean-demo:
-	rm -f $(GNUPLOT_X11)
+	rm -f $(GNUPLOT_QT)
 
 clean-local: clean-qt-extra clean-demo
 

@@ -1,5 +1,5 @@
 #ifndef lint
-static char *RCSid() { return RCSid("$Id: stats.c,v 1.14.2.5 2015/03/24 17:27:01 sfeam Exp $"); }
+static char *RCSid() { return RCSid("$Id: stats.c,v 1.14.2.12 2016/09/28 05:38:15 sfeam Exp $"); }
 #endif
 
 /* GNUPLOT - stats.c */
@@ -49,7 +49,7 @@ static char *RCSid() { return RCSid("$Id: stats.c,v 1.14.2.5 2015/03/24 17:27:01
 #define INITIAL_DATA_SIZE (4096)   /* initial size of data arrays */
 
 static int comparator __PROTO(( const void *a, const void *b ));
-static struct file_stats analyze_file __PROTO(( long n, int outofrange, int invalid, int blank, int dblblank ));
+static struct file_stats analyze_file __PROTO(( long n, int outofrange, int invalid, int blank, int dblblank, int headers ));
 static struct sgl_column_stats analyze_sgl_column __PROTO(( double *data, long n, long nr ));
 static struct two_column_stats analyze_two_columns __PROTO(( double *x, double *y,
 							     struct sgl_column_stats res_x,
@@ -90,6 +90,7 @@ struct file_stats {
     long invalid;
     long outofrange;
     long blocks;  /* blocks are separated by double blank lines */
+    long columnheaders;
 };
 
 struct sgl_column_stats {
@@ -160,7 +161,7 @@ comparator( const void *a, const void *b )
 }
 
 static struct file_stats
-analyze_file( long n, int outofrange, int invalid, int blank, int dblblank )
+analyze_file( long n, int outofrange, int invalid, int blank, int dblblank, int headers )
 {
     struct file_stats res;
 
@@ -169,6 +170,7 @@ analyze_file( long n, int outofrange, int invalid, int blank, int dblblank )
     res.blanks  = blank;
     res.blocks  = dblblank + 1;  /* blocks are separated by dbl blank lines */
     res.outofrange = outofrange;
+    res.columnheaders = headers;
 
     return res;
 }
@@ -386,6 +388,7 @@ file_output( struct file_stats s )
 	fprintf( print_out, "%s\t%ld\n", "invalid", s.invalid );
 	fprintf( print_out, "%s\t%ld\n", "blanks", s.blanks );
 	fprintf( print_out, "%s\t%ld\n", "blocks", s.blocks );
+	fprintf( print_out, "%s\t%ld\n", "columnheaders", s.columnheaders );
 	fprintf( print_out, "%s\t%ld\n", "outofrange", s.outofrange );
 	return;
     }
@@ -396,6 +399,7 @@ file_output( struct file_stats s )
     fprintf( print_out, "  Records:           %*ld\n", width, s.records );
     fprintf( print_out, "  Out of range:      %*ld\n", width, s.outofrange );
     fprintf( print_out, "  Invalid:           %*ld\n", width, s.invalid );
+    fprintf( print_out, "  Column headers:    %*ld\n", width, s.columnheaders );
     fprintf( print_out, "  Blank:             %*ld\n", width, s.blanks );
     fprintf( print_out, "  Data Blocks:       %*ld\n", width, s.blocks );
 }
@@ -621,6 +625,7 @@ file_variables( struct file_stats s, char *prefix )
     /* Suffix does not make sense here! */
     create_and_set_var( s.records, prefix, "records", "" );
     create_and_set_var( s.invalid, prefix, "invalid", "" );
+    create_and_set_var( s.columnheaders, prefix, "headers", "" );
     create_and_set_var( s.blanks,  prefix, "blank",   "" );
     create_and_set_var( s.blocks,  prefix, "blocks",  "" );
     create_and_set_var( s.outofrange, prefix, "outofrange", "" );
@@ -718,6 +723,7 @@ statsrequest(void)
     int columns;
     double v[2];
     static char *file_name = NULL;
+    char *temp_name;
 
     /* Vars to hold data and results */
     long n;                /* number of records retained */
@@ -728,6 +734,7 @@ statsrequest(void)
     long invalid;          /* number of missing/invalid records */
     long blanks;           /* number of blank lines */
     long doubleblanks;     /* number of repeated blank lines */
+    long columnheaders;    /* number of records treated as headers rather than data */
     long out_of_range;     /* number pts rejected, because out of range */
 
     struct file_stats res_file;
@@ -736,6 +743,7 @@ statsrequest(void)
 
     /* Vars for variable handling */
     static char *prefix = NULL;       /* prefix for user-defined vars names */
+    TBOOLEAN prefix_from_columnhead = FALSE;
 
     /* Vars that control output */
     TBOOLEAN do_output = TRUE;     /* Generate formatted output */
@@ -751,6 +759,7 @@ statsrequest(void)
     /* Initialize */
     invalid = 0;          /* number of missing/invalid records */
     blanks = 0;           /* number of blank lines */
+    columnheaders = 0;    /* number of records treated as headers rather than data */
     doubleblanks = 0;     /* number of repeated blank lines */
     out_of_range = 0;     /* number pts rejected, because out of range */
     n = 0;                /* number of records retained */
@@ -764,15 +773,15 @@ statsrequest(void)
     if ( !data_x || !data_y )
       int_error( NO_CARET, "Internal error: out of memory in stats" );
 
-    n = invalid = blanks = doubleblanks = out_of_range = 0;
+    n = invalid = blanks = columnheaders = doubleblanks = out_of_range = 0;
 
     /* Get filename */
-    free ( file_name );
     i = c_token;
-    file_name = string_or_express(NULL);
-    if (file_name )
-	file_name = gp_strdup(file_name);
-    else
+    temp_name = string_or_express(NULL);
+    if (temp_name) {
+	free(file_name);
+	file_name = gp_strdup(temp_name);
+    } else
 	int_error(i, "missing filename or datablock");
 
     /* Jan 2015: We used to handle ascii matrix data as a special case but
@@ -782,10 +791,15 @@ statsrequest(void)
      * to set the effective number of columns to 1.
      */
     if (TRUE) {
-	columns = df_open(file_name, 2, NULL); /* up to 2 using specs allowed */
+	df_set_plot_mode(MODE_PLOT);		/* Used for matrix datafiles */
+	columns = df_open(file_name, 2, NULL);	/* up to 2 using specs allowed */
 
-	if (columns < 0)
-	    int_error(NO_CARET, "Can't read data file");
+	if (columns < 0) {
+	    int_warn(NO_CARET, "Can't read data file");
+	    while (!END_OF_COMMAND)
+		c_token++;
+	    goto stats_cleanup;
+	}
 
 	/* For all these below: we could save the state, switch off, then restore */
 	if ( axis_array[FIRST_X_AXIS].log || axis_array[FIRST_Y_AXIS].log )
@@ -800,6 +814,34 @@ statsrequest(void)
 
 	if ( parametric )
 	    int_error( NO_CARET, "Stats command not available in parametric mode" );
+
+	/* Parse the remainder of the command line */
+	while( !(END_OF_COMMAND) ) {
+	    if ( almost_equals( c_token, "out$put" ) ) {
+		    do_output = TRUE;
+		    c_token++;
+
+	    } else if ( almost_equals( c_token, "noout$put" ) ) {
+		    do_output = FALSE;
+		    c_token++;
+
+	    } else if ( almost_equals(c_token, "pre$fix")
+		   ||   equals(c_token, "name")) {
+		c_token++;
+		free ( prefix );
+		if (almost_equals(c_token,"col$umnheader")) {
+		    df_set_key_title_columnhead(NULL);
+		    prefix_from_columnhead = TRUE;
+		    continue;
+		}
+		prefix = try_to_get_string();
+		if (!legal_identifier(prefix) || !strcmp ("GPVAL_", prefix))
+		    int_error( --c_token, "illegal prefix" );
+
+	    }  else {
+		int_error( c_token, "Unrecognized fit option");
+	    }
+	}
 
 	/* If the user has set an explicit locale for numeric input, apply it */
 	/* here so that it affects data fields read from the input file. */
@@ -842,8 +884,12 @@ statsrequest(void)
 	      doubleblanks += 1;
 	      continue;
 
+	    case DF_COLUMN_HEADERS:
+	      columnheaders += 1;
+	      continue;
+
 	    case 0:
-	      int_error( NO_CARET, "bad data on line %d of file %s",
+	      int_warn( NO_CARET, "bad data on line %d of file %s",
 	  		df_line_number, df_filename ? df_filename : "" );
 	      break;
 
@@ -868,6 +914,11 @@ statsrequest(void)
 	      }
 	      columns = 2;
 	      break;
+
+	    default: /* Who are these? */
+	      FPRINTF((stderr,"unhandled return code %d from df_readline\n", i));
+	      break;
+
 	    }
 	} /* end-while : done reading file */
 	df_close();
@@ -883,36 +934,22 @@ statsrequest(void)
     /* No data! Try to explain why. */
     if ( n == 0 ) {
 	if ( out_of_range > 0 )
-	    int_error( NO_CARET, "All points out of range" );
+	    int_warn( NO_CARET, "All points out of range" );
 	else
-	    int_error( NO_CARET, "No valid data points found in file" );
+	    int_warn( NO_CARET, "No valid data points found in file" );
     }
 
-    /* Parse the remainder of the command line: 0 to 2 tokens possible */
-    while( !(END_OF_COMMAND) ) {
-	if ( almost_equals( c_token, "out$put" ) ) {
-		do_output = TRUE;
-		c_token++;
-
-	} else if ( almost_equals( c_token, "noout$put" ) ) {
-		do_output = FALSE;
-		c_token++;
-
-	} else if ( almost_equals(c_token, "pre$fix")
-	       ||   equals(c_token, "name")) {
-	    c_token++;
-	    free ( prefix );
-	    prefix = try_to_get_string();
-	    if (!legal_identifier(prefix) || !strcmp ("GPVAL_", prefix))
-		int_error( --c_token, "illegal prefix" );
-
-	}  else {
-	    int_error( c_token, "Expecting [no]output or prefix");
+    /* The analysis variables are named STATS_* unless the user either */
+    /* gave a specific name or told us to use a columnheader.          */
+    if (!prefix && prefix_from_columnhead && df_key_title && *df_key_title) {
+	prefix = gp_strdup(df_key_title);
+	squash_spaces(prefix, 0);
+	if (!legal_identifier(prefix)) {
+	    int_warn(NO_CARET, "columnhead %s is not a valid prefix", prefix ? prefix : "");
+	    free(prefix);
+	    prefix = NULL;
 	}
-
     }
-
-    /* Set defaults if not explicitly set by user */
     if (!prefix)
 	prefix = gp_strdup("STATS_");
     i = strlen(prefix);
@@ -922,7 +959,7 @@ statsrequest(void)
     }
 
     /* Do the actual analysis */
-    res_file = analyze_file( n, out_of_range, invalid, blanks, doubleblanks );
+    res_file = analyze_file( n, out_of_range, invalid, blanks, doubleblanks, columnheaders );
 
     /* Jan 2015: Revised detection and handling of matrix data */
     if (df_matrix) {
@@ -966,6 +1003,7 @@ statsrequest(void)
     }
 
     /* Cleanup */
+    stats_cleanup:
 
     free(data_x);
     free(data_y);

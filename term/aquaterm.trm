@@ -1,5 +1,5 @@
 /* -*- objc -*-
- * $Id: aquaterm.trm,v 1.51.2.1 2015/02/25 00:23:04 sfeam Exp $
+ * $Id: aquaterm.trm,v 1.51.2.8 2017/02/10 19:42:22 sfeam Exp $
  *
  */
 
@@ -49,6 +49,7 @@ TERM_PUBLIC void AQUA_graphics __PROTO((void));
 TERM_PUBLIC void AQUA_move __PROTO((unsigned int x, unsigned int y));
 TERM_PUBLIC void AQUA_vector __PROTO((unsigned int x, unsigned int y));
 TERM_PUBLIC void AQUA_linetype __PROTO((int linetype));
+TERM_PUBLIC void AQUA_dashtype(int type, t_dashtype *custom_dash_type);
 TERM_PUBLIC void AQUA_put_text __PROTO((unsigned int x, unsigned int y,const char *str));
 /* Optional entries */
 TERM_PUBLIC int AQUA_text_angle __PROTO((int));
@@ -237,27 +238,37 @@ AQUA_options()
 	continue;
     }
 
-	if (equals(c_token, "solid")) {
-	    c_token++;
-	    AQUA_dashedlines = FALSE;
-	    continue;
-	}
-	
-	if (almost_equals(c_token, "dash$ed")) {
-	    c_token++;
-	    AQUA_dashedlines = TRUE;
-	    continue;
-	}
+    if (equals(c_token, "solid")) {
+	c_token++;
+	AQUA_dashedlines = FALSE;
+	continue;
+    }
+    
+    if (almost_equals(c_token, "dash$ed")) {
+	c_token++;
+	AQUA_dashedlines = TRUE;
+	continue;
+    }
 
-	if (equals(c_token, "dl") || almost_equals(c_token, "dashl$ength")) {
-	    c_token++;
-	    if (END_OF_COMMAND)
-		int_error(c_token, "expecting dashlength multiplier");
-	    AQUA_dashlength_factor = real_expression();
-	    if (AQUA_dashlength_factor < 0.0)
-		AQUA_dashlength_factor = AQUA_DEFAULT_DASHLENGTH_FACTOR;
-	    continue;
-	}
+    if (equals(c_token, "lw") || almost_equals(c_token, "linew$idth")) {
+	c_token++;
+	if (END_OF_COMMAND)
+	    int_error(c_token, "expecting line width");
+	AQUA_LineWidth = real_expression();
+	if (AQUA_LineWidth < 0.0)
+	    AQUA_LineWidth = 1.0;
+	continue;
+    }
+
+    if (equals(c_token, "dl") || almost_equals(c_token, "dashl$ength")) {
+	c_token++;
+	if (END_OF_COMMAND)
+	    int_error(c_token, "expecting dashlength multiplier");
+	AQUA_dashlength_factor = real_expression();
+	if (AQUA_dashlength_factor < 0.0)
+	    AQUA_dashlength_factor = AQUA_DEFAULT_DASHLENGTH_FACTOR;
+	continue;
+    }
 
     if (almost_equals(c_token, "enh$anced")) {
       term->put_text = ENHAQUA_put_text;
@@ -294,6 +305,8 @@ AQUA_options()
 	  AQUA_dashedlines?"dashed":"solid");
   if (AQUA_dashedlines)
     sprintf(&(term_options[strlen(term_options)]), " dl %3.1f", AQUA_dashlength_factor);
+  if (AQUA_LineWidth != 1.0)
+    sprintf(&(term_options[strlen(term_options)]), " linewidth %3.1f", AQUA_LineWidth);
 }
 
 static NSString* 
@@ -387,7 +400,7 @@ AQUA_init()
    * Set up the basic indexed colormap for gnuplot
    */
   /*  Special colors */
-  [adapter setColormapEntry:0 red:0.1 green:0.1 blue:0.1]; /* linetype -4 */
+  [adapter setColormapEntry:0 red:1.0 green:1.0 blue:1.0]; /* linetype -4 */
   [adapter setColormapEntry:1 red:0.9 green:0.9 blue:0.9]; /* linetype -3 (xor;interactive) light gray */
   [adapter setColormapEntry:2 red:0.0 green:0.0 blue:0.0]; /* linetype -2 (border) black */
   [adapter setColormapEntry:3 red:0.8 green:0.8 blue:0.8]; /* linetype -1 (gridlines) light grey */
@@ -471,6 +484,44 @@ AQUA_linetype(int linetype)
 	      dash[i] = AQUA_dashPatterns[style][i] * AQUA_dashlength_factor;
 	   }
        [adapter setLinestylePattern:dash count:AQUA_dashPatternLengths[style] phase:0.0];
+    }
+  }
+}
+
+TERM_PUBLIC void
+AQUA_dashtype(int type, t_dashtype *custom_dash_type)
+{
+  float dash[DASHPATTERN_LENGTH];
+  int i;
+  LOG(@"AQUA_dashtype(%d)", type);
+
+  if(!AQUA_dashedlines) {
+    return;
+  }
+  switch(type) {
+  case DASHTYPE_SOLID:
+    [adapter setLinestyleSolid];
+    break;
+  case DASHTYPE_AXIS:
+    break;
+  case DASHTYPE_CUSTOM:
+    if (custom_dash_type) {
+      for(i = 0; i < DASHPATTERN_LENGTH && custom_dash_type->pattern[i] > 0; i++) {
+	dash[i] = custom_dash_type->pattern[i] * AQUA_dashlength_factor;
+      }
+      [adapter setLinestylePattern:dash count:i phase:0.0];
+    }
+    break;
+  default:
+    if(type > 0) {
+      type %= AQUA_DASH_PATTERNS;
+      for(i = 0; i<AQUA_dashPatternLengths[type]; i++) {
+	dash[i] = AQUA_dashPatterns[type][i] * AQUA_dashlength_factor;
+      }
+      [adapter setLinestylePattern:dash count:AQUA_dashPatternLengths[type] phase:0.0];
+    }
+    else {
+      [adapter setLinestyleSolid];
     }
   }
 }
@@ -620,6 +671,9 @@ AQUA_boxfill(int style, unsigned int x1, unsigned int y1, unsigned int width, un
   }
 
   NSRect scaledRect = NSMakeRect(x1/AQUA_RESOLUTION, y1/AQUA_RESOLUTION, width/AQUA_RESOLUTION, height/AQUA_RESOLUTION);
+  /* FIXME: Aquaterm eraseRect scales very badly with the total number of rectangles.
+   *        It is probably fixable, but is the erase operation necessary at all?
+   */
   [adapter eraseRect:scaledRect];
   [adapter addFilledRect:scaledRect];
   
@@ -633,6 +687,7 @@ AQUA_boxfill(int style, unsigned int x1, unsigned int y1, unsigned int width, un
 TERM_PUBLIC void
 AQUA_linewidth(double linewidth)
 {
+  linewidth *= AQUA_LineWidth;
   [adapter setLinewidth:linewidth];
 }
 
@@ -737,6 +792,12 @@ AQUA_filled_polygon(int pc, gpiPoint *corners)
     [adapter addEdgeToVertexPoint:NSMakePoint(corners[i].x/AQUA_RESOLUTION,
 					      corners[i].y/AQUA_RESOLUTION)];
   }
+
+  /* Restore color */
+  if (AQUA_hasAlphaSupport)
+    [adapter setColorRed:r green:g blue:b alpha:a];
+  else
+    [adapter setColorRed:r green:g blue:b];
 }
 
 TERM_PUBLIC void
@@ -804,11 +865,15 @@ static NSMutableDictionary *attributes;
 TERM_PUBLIC void 
 ENHAQUA_put_text(unsigned int x, unsigned int y, const char str[])
 {
-  if (!strpbrk(str, "{}^_@&~"))
-    {
-      AQUA_put_text(x,y,str);
-      return;
-    }
+
+  if (!strlen(str))
+    return;
+
+  if (ignore_enhanced_text || !strpbrk(str, "{}^_@&~")) {
+    AQUA_put_text(x,y,str);
+    return;
+  }
+
   /* set up the global variables needed by enhanced_recursion() */
   enhanced_fontscale = 1;
   strncpy(enhanced_escape_format,"\\%o",sizeof(enhanced_escape_format));
@@ -853,12 +918,12 @@ ENHAQUA_open(char * fontname, double fontsize,
   attributes = [[NSMutableDictionary alloc] initWithCapacity:16]; 
   [attributes setObject:AQUA_convert_using_encoding(fontname) forKey:@"AQTFontname"];
 
-  if (abs(base)>0.01) { 
+  if (fabs(base)>0.01) { 
     /* consider this as super/subscript, and compute subscript level */
     int n = (int)round(log(fontsize/AQUA_fontSizeCur)/log(0.8)); 
     [attributes setObject:[NSNumber numberWithInt:(base > 0)?n:-n] 
 		   forKey:@"NSSuperScript"];
-  } else if (abs(fontsize - AQUA_fontSizeCur)>0.01) {
+  } else if (fabs(fontsize - AQUA_fontSizeCur)>0.01) {
     /* Fontsize was set explicitly */
     [attributes setObject:[NSNumber numberWithFloat:fontsize] forKey:@"AQTFontsize"];
   }
@@ -911,7 +976,8 @@ TERM_TABLE_START(aqua_driver)
   /* optionals */
   AQUA_text_angle,
   AQUA_justify_text, AQUA_point, do_arrow, AQUA_set_font,
-  AQUA_pointsize, TERM_CAN_MULTIPLOT|TERM_NO_OUTPUTFILE|TERM_CAN_DASH,
+  AQUA_pointsize,
+  TERM_CAN_MULTIPLOT|TERM_NO_OUTPUTFILE|TERM_CAN_DASH|TERM_POLYGON_PIXELS|TERM_LINEWIDTH,
   AQUA_suspend, AQUA_resume,
   AQUA_boxfill, AQUA_linewidth
 #ifdef USE_MOUSE
@@ -922,7 +988,10 @@ TERM_TABLE_START(aqua_driver)
   AQUA_set_color,
   AQUA_filled_polygon,
   AQUA_image,
-  ENHAQUA_open, ENHAQUA_flush, ENHAQUA_writec
+  ENHAQUA_open, ENHAQUA_flush, ENHAQUA_writec,
+  0 /* layer */ , 0 /* path */ , 0.0 /* tscale */ , 0 /* hypertext */,
+  0 /* boxed_text */ , 0 /* modify_plots */,
+  AQUA_dashtype
 TERM_TABLE_END(aqua_driver)
 
 #undef LAST_TERM
@@ -946,6 +1015,7 @@ START_HELP(aqua)
 " Syntax:",
 "       set terminal aqua {<n>} {title \"<wintitle>\"} {size <x> <y>}",
 "                         {font \"<fontname>{,<fontsize>}\"}",
+"                         {linewidth <lw>}\"}",
 "                         {{no}enhanced} {solid|dashed} {dl <dashlength>}}",
 "",
 " where <n> is the number of the window to draw in (default is 0),",

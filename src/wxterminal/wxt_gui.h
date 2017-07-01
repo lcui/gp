@@ -1,5 +1,5 @@
 /*
- * $Id: wxt_gui.h,v 1.48.2.4 2014/12/26 23:23:03 sfeam Exp $
+ * $Id: wxt_gui.h,v 1.48.2.8 2016/08/26 04:16:01 sfeam Exp $
  */
 
 /* GNUPLOT - wxt_gui.h */
@@ -102,6 +102,9 @@
 /* wxMemoryInputStream, for the embedded PNG icons */
 #include <wx/mstream.h>
 
+/* Debugging support, required to turn off asserts */
+#include <wx/debug.h>
+
 /* c++ vectors and lists, used to store gnuplot commands */
 #include <vector>
 #include <list>
@@ -169,9 +172,9 @@ extern "C" {
  * console window */
 # ifdef _Windows
 #  ifndef _WIN32_WINNT 
-#   define _WIN32_WINNT 0x0500
+#   define _WIN32_WINNT 0x0501
 #  endif
-#  include "Windows.h"
+#  include <windows.h>
 #  include "win/wtext.h"
 #  include "win/winmain.h"
 # endif
@@ -237,15 +240,15 @@ public:
 static wxtThread * thread;
 #endif /* WXT_MULTITHREADED */
 
-DECLARE_EVENT_TYPE(wxExitLoopEvent, -1)
-DEFINE_EVENT_TYPE(wxExitLoopEvent)
+DECLARE_LOCAL_EVENT_TYPE(wxExitLoopEvent, -1)
+DEFINE_LOCAL_EVENT_TYPE(wxExitLoopEvent)
 
-DECLARE_EVENT_TYPE(wxCreateWindowEvent, -1)
-DEFINE_EVENT_TYPE(wxCreateWindowEvent)
+DECLARE_LOCAL_EVENT_TYPE(wxCreateWindowEvent, -1)
+DEFINE_LOCAL_EVENT_TYPE(wxCreateWindowEvent)
 
 #ifdef USE_MOUSE
-DECLARE_EVENT_TYPE(wxStatusTextEvent, -1)
-DEFINE_EVENT_TYPE(wxStatusTextEvent)
+DECLARE_LOCAL_EVENT_TYPE(wxStatusTextEvent, -1)
+DEFINE_LOCAL_EVENT_TYPE(wxStatusTextEvent)
 #endif /* USE_MOUSE */
 
 /* Define a new application type, each gui should derive a class from wxApp */
@@ -593,7 +596,6 @@ static wxt_window_t* wxt_findwindowbyid(wxWindowID);
 
 /* pointers to currently active instances */
 static wxt_window_t *wxt_current_window;
-static command_list_t *wxt_current_command_list;
 static wxtPanel *wxt_current_panel;
 static plot_struct *wxt_current_plot;
 

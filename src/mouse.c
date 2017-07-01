@@ -1,5 +1,5 @@
 #ifndef lint
-static char *RCSid() { return RCSid("$Id: mouse.c,v 1.168.2.7 2015/03/24 21:34:58 sfeam Exp $"); }
+static char *RCSid() { return RCSid("$Id: mouse.c,v 1.168.2.10 2016/06/18 05:36:05 sfeam Exp $"); }
 #endif
 
 /* GNUPLOT - mouse.c */
@@ -2235,9 +2235,11 @@ do_event(struct gp_event_t *ge)
 	/* FIXME: more terminals should use this! */
 	if (replot_line == NULL || replot_line[0] == '\0')
 	    break;
+	if (!strncmp(replot_line,"test",4))
+	    break;
 	if (multiplot)
 	    break;
-	do_string("replot");
+	do_string_replot("");
 	break;
     case GE_reset:
 	event_reset(ge);
@@ -2442,7 +2444,7 @@ bind_fmt_lhs(const bind_t * in)
 	sprintf(out, "Ctrl-");
     }
     if (in->modifier & Mod_Alt) {
-	strcat(out, "%sAlt-");
+	strcat(out, "Alt-");
     }
     if (in->key > GP_FIRST_KEY && in->key < GP_LAST_KEY) {
 	strcat(out,special_keys[in->key - GP_FIRST_KEY]);
@@ -2483,7 +2485,7 @@ bind_display_one(bind_t * ptr)
     fprintf(stderr, " %-12s ", bind_fmt_lhs(ptr));
     fprintf(stderr, "%c ", ptr->allwindows ? '*' : ' ');
     if (ptr->command) {
-	fprintf(stderr, "`%s'\n", ptr->command);
+	fprintf(stderr, "`%s`\n", ptr->command);
     } else if (ptr->builtin) {
 	fprintf(stderr, "%s\n", ptr->builtin(0));
     } else {

@@ -105,6 +105,9 @@ struct QtGnuplotState {
     QLocalSocket socket;
     QByteArray   outBuffer;
     QDataStream  out;
+#ifdef _WIN32
+    DWORD        pid;
+#endif
 
     bool       enhancedSymbol;
     QString    enhancedFontName;
@@ -164,6 +167,7 @@ static int  qt_optionWidth    = 640;
 static int  qt_optionHeight   = 480;
 static int  qt_optionFontSize = 9;
 static double qt_optionDashLength = 1.0;
+static double qt_optionLineWidth = 1.0;
 
 /* Encapsulates all Qt options that have a constructor and destructor. */
 struct QtOption {
@@ -211,6 +215,14 @@ QPoint qt_gnuplotCoord(int x, int y)
 	return QPoint(x*qt_oversampling, int(term->ymax) - y*qt_oversampling);
 }
 
+#ifndef GNUPLOT_QT
+# ifdef WIN32
+#  define GNUPLOT_QT "gnuplot_qt.exe"
+# else
+#  define GNUPLOT_QT "gnuplot_qt"
+# endif
+#endif
+
 // Start the GUI application
 void execGnuplotQt()
 {
@@ -218,22 +230,28 @@ void execGnuplotQt()
 	char* path = getenv("GNUPLOT_DRIVER_DIR");
 	if (path)
 		filename = QString(path);
+	if (filename.isEmpty()) {
 #ifdef WIN32
-	if (filename.isEmpty())
 		filename = QCoreApplication::applicationDirPath();
-	filename += "/gnuplot_qt.exe";
 #else
-	if (filename.isEmpty())
 		filename = QT_DRIVER_DIR;
-	filename += "/gnuplot_qt";
 #endif
+	}
+
+	filename += "/";
+	filename += GNUPLOT_QT;
 
 	qint64 pid;
 	qt->gnuplot_qtStarted = QProcess::startDetached(filename, QStringList(), QString(), &pid);
-	if (qt->gnuplot_qtStarted)
+	if (qt->gnuplot_qtStarted) {
 		qt->localServerName = "qtgnuplot" + QString::number(pid);
-	else
-		qDebug() << "Could not start gnuplot_qt with path" << filename;
+#ifdef _WIN32
+		// save the terminal's PID for later use
+		qt->pid = pid;
+#endif
+	} else {
+		fprintf(stderr, "Could not start gnuplot_qt with path %s\n", filename.toUtf8().data());
+	}
 }
 
 /*-------------------------------------------------------
@@ -245,7 +263,7 @@ void qt_flushOutBuffer()
 	if (!qt || !qt->socket.isValid())
 		return;
 
-	// Write the block size at the beginning of the bock
+	// Write the block size at the beginning of the block
 	QDataStream sizeStream(&qt->socket);
 	sizeStream << (quint32)(qt->outBuffer.size());
 	// Write the block to the QLocalSocket
@@ -290,14 +308,14 @@ void qt_connectToServer(const QString& server, bool retry = true)
 		// The widget could not be reached: start a gnuplot_qt program which will create a QtGnuplotApplication
 		if (connectToWidget)
 		{
-			qDebug() << "Could not connect to widget" << qt_option->Widget << ". Starting a QtGnuplotApplication";
+			fprintf(stderr, "Could not connect to existing qt widget. Starting a new one.\n");
 			qt_option->Widget = QString();
 			qt_connectToServer(qt->localServerName);
 		}
 		// The gnuplot_qt program could not be reached: try to start a new one
 		else
 		{
-			qDebug() << "Could not connect to gnuplot_qt" << server << ". Starting a new one";
+			fprintf(stderr, "Could not connect to existing gnuplot_qt. Starting a new one.\n");
 			execGnuplotQt();
 			qt_connectToServer(qt->localServerName, false);
 		}
@@ -349,7 +367,7 @@ bool qt_processTermEvent(gp_event_t* event)
 		// This is an answer to a font metric request. We don't send it back to gnuplot
 		if ((event->par1 > 0) && (event->par2 > 0))
 		{
-			qDebug() << "qt_processTermEvent received a GE_fontprops event. This should not have happened";
+			fprintf(stderr, "qt_processTermEvent received a GE_fontprops event. This should not have happened\n");
 			return false;
 		}
 		// This is a resize event
@@ -363,6 +381,19 @@ bool qt_processTermEvent(gp_event_t* event)
 		QPoint p = qt_gnuplotCoord(event->mx, event->my);
 		event->mx = p.x();
 		event->my = p.y();
+	}
+
+	if (event->type == GE_raise)
+	{
+#ifdef _WIN32
+# ifndef WGP_CONSOLE
+		SetForegroundWindow(textwin.hWndParent);
+# else
+		SetForegroundWindow(GetConsoleWindow());
+# endif
+		WinRaiseConsole();
+#endif
+		return true;
 	}
 
 	// Send the event to gnuplot core
@@ -504,6 +535,10 @@ void qt_graphics()
 	// Initialize window
 	qt->out << GESetCurrentWindow << qt_optionWindowId;
 	qt->out << GEInitWindow;
+#ifdef _WIN32
+	// Let the terminal window know our PID
+	qt->out << GEPID << quint32(GetCurrentProcessId());
+#endif
 	qt->out << GEActivate;
 	qt->out << GETitle << qt_option->Title;
 	qt->out << GESetCtrl << qt_optionCtrl;
@@ -527,7 +562,13 @@ void qt_graphics()
 void qt_text()
 {
 	if (qt_optionRaise)
+	{
+#ifdef _WIN32
+		// The qt graph window is in another process and we must explicitly allow it to "raise".
+		AllowSetForegroundWindow(qt->pid);
+#endif
 		qt->out << GERaise;
+	}
 	qt->out << GEDone;
 	qt_flushOutBuffer();
 }
@@ -537,7 +578,7 @@ void qt_text_wrapper()
 	if (!qt)
 		return;
 
-	// Remember scale to update the status bar while the plot is inactive
+	// Remember scale so that we can update the status bar while the plot is inactive
 	qt->out << GEScale;
 
 	const int axis_order[4] = {FIRST_X_AXIS, FIRST_Y_AXIS, SECOND_X_AXIS, SECOND_Y_AXIS};
@@ -788,7 +829,7 @@ void qt_pointsize(double ptsize)
 
 void qt_linewidth(double lw)
 {
-	qt->out << GELineWidth << lw;
+	qt->out << GELineWidth << lw * qt_optionLineWidth;
 }
 
 int qt_text_angle(int angle)
@@ -929,8 +970,12 @@ int qt_waitforinput(int options)
 	int stdin_fd  = fileno(stdin);
 	int socket_fd = qt ? qt->socket.socketDescriptor() : -1;
 
-	if (!qt || (socket_fd < 0) || (qt->socket.state() != QLocalSocket::ConnectedState))
-		return (options == TERM_ONLY_CHECK_MOUSING) ? '\0' : getchar();
+	if (!qt || (socket_fd < 0) || (qt->socket.state() != QLocalSocket::ConnectedState)) {
+		if (options == TERM_ONLY_CHECK_MOUSING)
+			return '\0';
+		else
+			return getchar();
+	}
 
 	// Gnuplot event loop
 	do
@@ -966,7 +1011,7 @@ int qt_waitforinput(int options)
 		{
 			if (!(qt->socket.waitForReadyRead(-1))) {
 				// Must be a socket error; we need to restart qt_gnuplot
-				qDebug() << "Error: gnuplot_qt socket not responding";
+				fprintf(stderr, "Error: plot window (gnuplot_qt) not responding - will restart\n");
 				qt->gnuplot_qtStarted = false;
 				return '\0';
 			}
@@ -976,7 +1021,7 @@ int qt_waitforinput(int options)
 			gp_event_t tempEvent;
 			tempEvent.type = -1;
 			if (qt->socket.bytesAvailable() < (int)sizeof(gp_event_t)) {
-				qDebug() << "Error: short read from gnuplot_qt socket";
+				fprintf(stderr, "Error: short read from gnuplot_qt socket\n");
 				return '\0';
 			}
 			while (qt->socket.bytesAvailable() >= (int)sizeof(gp_event_t))
@@ -1007,7 +1052,12 @@ int qt_waitforinput(int options)
 			return '\0';
 		}
 	} while (paused_for_mouse || !FD_ISSET(stdin_fd, &read_fds));
+
+	if (options == TERM_ONLY_CHECK_MOUSING)
+		return '\0';
+	else
 		return getchar();
+
 #else // Windows console and wgnuplot
 #ifdef WGP_CONSOLE
 	int fd = fileno(stdin);
@@ -1206,6 +1256,7 @@ enum QT_id {
 	QT_DASH,
 	QT_DASHLENGTH,
 	QT_SOLID,
+	QT_LINEWIDTH,
 	QT_OTHER
 };
 
@@ -1224,10 +1275,12 @@ static struct gen_table qt_opts[] = {
 	{"noct$rlq",    QT_NOCTRL},
 	{"ti$tle",      QT_TITLE},
 	{"cl$ose",      QT_CLOSE},
-	{"dash$ed",	QT_DASH},
-	{"dashl$ength",	QT_DASHLENGTH},
-	{"dl",		QT_DASHLENGTH},
-	{"solid",	QT_SOLID},
+	{"dash$ed",     QT_DASH},
+	{"dashl$ength", QT_DASHLENGTH},
+	{"dl",          QT_DASHLENGTH},
+	{"solid",       QT_SOLID},
+	{"line$width",  QT_LINEWIDTH},
+	{"lw",          QT_LINEWIDTH},
 	{NULL,          QT_OTHER}
 };
 
@@ -1250,6 +1303,8 @@ void qt_options()
 	bool set_widget = false;
 	bool set_dash = false;
 	bool set_dashlength = false;
+	bool set_linewidth = false;
+	int previous_WindowId = qt_optionWindowId;
 
 #ifndef WIN32
 	if (term_interlock != NULL && term_interlock != (void *)qt_init) {
@@ -1366,6 +1421,10 @@ void qt_options()
 			// qt_optionDash = false;
 			c_token++;
 			break;
+		case QT_LINEWIDTH:
+			SETCHECKDUP(set_linewidth);
+			qt_optionLineWidth = real_expression();
+			break;
 		case QT_OTHER:
 		default:
 			qt_optionWindowId = int_expression();
@@ -1379,6 +1438,14 @@ void qt_options()
 			int_error(c_token-1, "Duplicated or contradicting arguments in qt term options.");
 	}
 
+	// We want this to happen immediately, hence the flush command.
+	// We don't want it to change the _current_ window, just close an old one.
+	if (set_close && qt) {
+		qt->out << GECloseWindow << qt_optionWindowId;
+		qt_flushOutBuffer();
+		qt_optionWindowId = previous_WindowId;
+	}
+
 	// Save options back into options string in normalized format
 	QString termOptions = QString::number(qt_optionWindowId);
 
@@ -1388,8 +1455,6 @@ void qt_options()
 	if (set_title)
 	{
 		termOptions += " title \"" + qt_option->Title + '"';
-		if (qt)
-			qt->out << GETitle << qt_option->Title;
 	}
 
 	if (set_size)
@@ -1410,13 +1475,12 @@ void qt_options()
 
 	if (set_enhanced) termOptions += qt_optionEnhanced ? " enhanced" : " noenhanced";
 	                  termOptions += " font \"" + fontSettings + '"';
+	if (set_linewidth) termOptions += " linewidth " + QString::number(qt_optionLineWidth);
 	if (set_dashlength) termOptions += " dashlength " + QString::number(qt_optionDashLength);
 	if (set_widget)   termOptions += " widget \"" + qt_option->Widget + '"';
 	if (set_persist)  termOptions += qt_optionPersist ? " persist" : " nopersist";
 	if (set_raise)    termOptions += qt_optionRaise ? " raise" : " noraise";
 	if (set_ctrl)     termOptions += qt_optionCtrl ? " ctrl" : " noctrl";
-
-	if (set_close && qt) qt->out << GECloseWindow << qt_optionWindowId;
 
 	/// @bug change Utf8 to local encoding
 	strncpy(term_options, termOptions.toUtf8().data(), MAX_LINE_LEN);
@@ -1465,7 +1529,10 @@ void qt_hypertext( int type, const char *text )
 #ifdef EAM_BOXED_TEXT
 void qt_boxed_text(unsigned int x, unsigned int y, int option)
 {
-	qt->out << GETextBox << qt_termCoordF(x, y) << option;
+	if (option == TEXTBOX_MARGINS)
+	    qt->out << GETextBox << QPointF((double)x/(100*qt_oversamplingF), (double)y/(100*qt_oversamplingF)) << option;
+	else
+	    qt->out << GETextBox << qt_termCoordF(x, y) << option;
 }
 #endif
 

@@ -75,29 +75,30 @@ silver.dat soundvel.dat srl.dat steps.dat table.dat timedat.dat \
 triangle.dat using.dat whale.dat world.dat airfoil.dem all.dem \
 animate2.dem animate.dem approximate.dem arrowstyle.dem autoscale.dem \
 barchart_art.dem binary.dem bivariat.dem bolditalic.dem borders.dem \
-boxplot.dem callargs.dem candlesticks.dem cerf.dem charset.dem circles.dem \
-cities.dem clipobject.dem colorscheme.dem colorwheel.dem complex_trig.dem \
-contours.dem controls.dem dashcolor.dem dashtypes.dem datastrings.dem \
-dgrid3d.dem discrete.dem electron.dem ellipse.dem ellipses_style.dem \
-enhancedtext.dem enhanced_utf8.dem epslatex.dem fillbetween.dem \
-fillcrvs.dem fillstyle.dem finance.dem fit.dem fitmulti.dem \
-fontfile.dem fontfile_latex.dem gantt.dem heatmaps.dem hidden2.dem \
-hidden.dem histograms2.dem histograms.dem hypertext.dem image2.dem \
-image.dem imageNaN.dem iterate.dem kdensity2d.dem key.dem layout.dem \
-lines_arrows.dem linkedaxes.dem macros.dem margins.dem matrix_index.dem \
-mgr.dem molecule.dem mouselab_1.dem mouselab_2.dem mouselabels.dem \
-mousevariables.dem multiaxis.dem multimsh.dem multipalette.dem \
-multiplt.dem named_var.dem nokey.dem orbits.dem parallel.dem param.dem \
-piecewise.dem pm3dcolors.dem pm3d.dem pm3dgamma.dem pointsize.dem \
-polar.dem poldat.dem prob2.dem prob.dem rainbow.dem random.dem \
-rectangle.dem rgba_lines.dem rgbalpha.dem rgb_variable.dem rugplot.dem \
-running_avg.dem scatter.dem simple.dem singulr.dem smooth.dem spline.dem \
-stats.dem steps.dem stringvar.dem surface1.dem surface2.dem textcolor.dem \
-textrotate.dem tics.dem timedat.dem transparent.dem transparent_solids.dem \
-using.dem utf8.dem varcolor.dem vector.dem world2.dem world.dem demo.edf \
-density.fnc hexa.fnc line.fnc reflect.fnc gen-random.inc stat.inc \
-GM1_sugar.pdb bldg.png GM1_bonds.r3d blutux.rgb lena.rgb sound.par \
-sound2.par start.par gnuplot.rot gnu-valley random-points gpdemos.tcl html 
+boxclusters.dem boxplot.dem callargs.dem candlesticks.dem cerf.dem \
+charset.dem circles.dem cities.dem clipobject.dem colorscheme.dem \
+colorwheel.dem complex_trig.dem contours.dem controls.dem dashcolor.dem \
+dashtypes.dem datastrings.dem dgrid3d.dem discrete.dem electron.dem \
+ellipse.dem ellipses_style.dem enhancedtext.dem enhanced_utf8.dem \
+epslatex.dem fillbetween.dem fillcrvs.dem fillstyle.dem finance.dem \
+fit.dem fitmulti.dem fontfile.dem fontfile_latex.dem gantt.dem \
+heatmaps.dem hidden2.dem hidden.dem histograms2.dem histograms.dem \
+hypertext.dem image2.dem image.dem imageNaN.dem iterate.dem kdensity2d.dem \
+key.dem layout.dem lines_arrows.dem linkedaxes.dem macros.dem margins.dem \
+matrix_index.dem mgr.dem molecule.dem mouselab_1.dem mouselab_2.dem \
+mouselabels.dem mousevariables.dem multiaxis.dem multimsh.dem \
+multipalette.dem multiplt.dem named_var.dem nokey.dem orbits.dem \
+parallel.dem param.dem piecewise.dem pm3dcolors.dem pm3d.dem pm3dgamma.dem \
+pointsize.dem polar.dem poldat.dem prob2.dem prob.dem rainbow.dem \
+random.dem rectangle.dem rgba_lines.dem rgbalpha.dem rgb_variable.dem \
+rotate_labels.dem rugplot.dem running_avg.dem scatter.dem simple.dem \
+singulr.dem smooth.dem special_chars.dem spline.dem stats.dem steps.dem \
+stringvar.dem surface1.dem surface2.dem textcolor.dem textrotate.dem \
+tics.dem timedat.dem transparent.dem transparent_solids.dem using.dem \
+utf8.dem varcolor.dem vector.dem world2.dem world.dem demo.edf density.fnc \
+hexa.fnc line.fnc reflect.fnc gen-random.inc stat.inc GM1_sugar.pdb \
+bldg.png GM1_bonds.r3d blutux.rgb lena.rgb sound.par sound2.par start.par \
+gnuplot.rot gnu-valley random-points gpdemos.tcl html 
 ##m4-files-end
 
 Makefile.am: Makefile.am.in

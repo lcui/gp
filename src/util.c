@@ -1,5 +1,5 @@
 #ifndef lint
-static char *RCSid() { return RCSid("$Id: util.c,v 1.128.2.1 2015/03/04 04:16:12 sfeam Exp $"); }
+static char *RCSid() { return RCSid("$Id: util.c,v 1.128.2.8 2017/01/28 06:53:52 sfeam Exp $"); }
 #endif
 
 /* GNUPLOT - util.c */
@@ -65,6 +65,12 @@ char *decimalsign = NULL;
 /* degree sign.  Defaults to UTF-8 but will be changed to match encoding */
 char degree_sign[8] = "°";
 
+/* encoding-specific characters used by gprintf() */
+const char *micro = NULL;
+const char *minus_sign = NULL;
+TBOOLEAN use_micro = FALSE;
+TBOOLEAN use_minus_sign = FALSE;
+
 /* Holds the name of the current LC_NUMERIC as set by "set decimal locale" */
 char *numeric_locale = NULL;
 
@@ -72,6 +78,12 @@ char *numeric_locale = NULL;
 char *current_locale = NULL;
 
 const char *current_prompt = NULL; /* to be set by read_line() */
+
+/* TRUE if command just typed; becomes FALSE whenever we
+ * send some other output to screen.  If FALSE, the command line
+ * will be echoed to the screen before the ^ error message.
+ */
+TBOOLEAN screen_ok;
 
 /* internal prototypes */
 
@@ -555,6 +567,10 @@ gprintf(
 
     char *dest  = &tempdest[0];
     char *limit = &tempdest[MAX_LINE_LEN];
+    static double log10_of_1024; /* to avoid excess precision comparison in check of connection %b -- %B */
+    
+    log10_of_1024 = log10(1024);
+    
 #define remaining_space (size_t)(limit-dest)
 
     *dest = '\0';
@@ -757,7 +773,7 @@ gprintf(
 
 		t[0] = 'f';
 		t[1] = 0;
-		stored_power_base = log10(1024);
+		stored_power_base = log10_of_1024;
 		mant_exp(stored_power_base, x, FALSE, &mantissa,
 				&stored_power, temp);
 		seen_mantissa = TRUE;
@@ -772,14 +788,16 @@ gprintf(
 
 		t[0] = 'd';
 		t[1] = 0;
-		if (seen_mantissa)
-		    if (stored_power_base == log10_base)
+		if (seen_mantissa) {
+		    if (stored_power_base == log10_base) {
 			power = stored_power;
-		    else
+		    } else {
 			int_error(NO_CARET, "Format character mismatch: %%L is only valid with %%l");
-		else
+		    }
+		} else {
 		    stored_power_base = log10_base;
 		    mant_exp(log10_base, x, FALSE, NULL, &power, "%.0f");
+		}
 		snprintf(dest, remaining_space, temp, power);
 		break;
 	    }
@@ -791,13 +809,15 @@ gprintf(
 
 		t[0] = 'd';
 		t[1] = 0;
-		if (seen_mantissa)
-		    if (stored_power_base == 1.0)
+		if (seen_mantissa) {
+		    if (stored_power_base == 1.0) {
 			power = stored_power;
-		    else
+		    } else {
 			int_error(NO_CARET, "Format character mismatch: %%T is only valid with %%t");
-		else
+		    }
+		} else {
 		    mant_exp(1.0, x, FALSE, NULL, &power, "%.0f");
+		}
 		snprintf(dest, remaining_space, temp, power);
 		break;
 	    }
@@ -809,13 +829,15 @@ gprintf(
 
 		t[0] = 'd';
 		t[1] = 0;
-		if (seen_mantissa)
-		    if (stored_power_base == 1.0)
+		if (seen_mantissa) {
+		    if (stored_power_base == 1.0) {
 			power = stored_power;
-		    else
+		    } else {
 			int_error(NO_CARET, "Format character mismatch: %%S is only valid with %%s");
-		else
+		    }
+		} else {
 		    mant_exp(1.0, x, TRUE, NULL, &power, "%.0f");
+		}
 		snprintf(dest, remaining_space, temp, power);
 		break;
 	    }
@@ -827,21 +849,17 @@ gprintf(
 
 		t[0] = 'c';
 		t[1] = 0;
-		if (seen_mantissa)
-		    if (stored_power_base == 1.0)
+		if (seen_mantissa) {
+		    if (stored_power_base == 1.0) {
 			power = stored_power;
-		    else
+		    } else {
 			int_error(NO_CARET, "Format character mismatch: %%c is only valid with %%s");
-		else
+		    }
+		} else {
 		    mant_exp(1.0, x, TRUE, NULL, &power, "%.0f");
+		}
 
 		if (power >= -24 && power <= 24) {
-		    /* -18 -> 0, 0 -> 6, +18 -> 12, ... */
-		    /* HBB 20010121: avoid division of -ve ints! */
-		    power = (power + 24) / 3;
-		    snprintf(dest, remaining_space, temp, "yzafpnum kMGTPEZY"[power]);
-		} else {
-		    /* please extend the range ! */
 		    /* name  power   name  power
 		       -------------------------
 		       yocto  -24    yotta  24
@@ -852,7 +870,17 @@ gprintf(
 		       nano    -9    Giga    9
 		       micro   -6    Mega    6
 		       milli   -3    kilo    3   */
+		    /* -18 -> 0, 0 -> 6, +18 -> 12, ... */
+		    /* HBB 20010121: avoid division of -ve ints! */
+		    power = (power + 24) / 3;
+		    snprintf(dest, remaining_space, temp, "yzafpnum kMGTPEZY"[power]);
 
+		    /* Replace u with micro character */
+		    if (use_micro && power == 6)
+			snprintf(dest, remaining_space, "%s%s", micro, &temp[2]);
+
+		} else {
+		    /* please extend the range ! */
 		    /* fall back to simple exponential */
 		    snprintf(dest, remaining_space, "e%+02d", power);
 		}
@@ -866,14 +894,16 @@ gprintf(
 
 		t[0] = 'c';
 		t[1] = 'i';
-		t[2] = 0;
-		if (seen_mantissa)
-		    if (stored_power_base == log10(1024))
+		t[2] = '\0';
+		if (seen_mantissa) {
+		    if (stored_power_base == log10_of_1024) {
 			power = stored_power;
-		    else
+		    } else {
 			int_error(NO_CARET, "Format character mismatch: %%B is only valid with %%b");
-		else
-			mant_exp(log10(1024), x, FALSE, NULL, &power, "%.0f");
+		    }
+		} else {
+			mant_exp(log10_of_1024, x, FALSE, NULL, &power, "%.0f");
+		}
 
 		if (power > 0 && power <= 8) {
 		    /* name  power
@@ -892,7 +922,9 @@ gprintf(
 		    snprintf(dest, remaining_space, "x2^{%d}Yi", power-8);
 		} else if (power < 0) {
 		    snprintf(dest, remaining_space, "x2^{%d}", power*10);
-		}
+		} else {
+                    snprintf(dest, remaining_space, "  ");
+                }
 
 		break;
 	    }
@@ -945,6 +977,47 @@ gprintf(
 	    }
 	}
 
+    /* EXPERIMENTAL
+     * Some people prefer a "real" minus sign to the hyphen that standard
+     * formatted input and output both use.  Unlike decimal signs, there is
+     * no internationalization mechanism to specify this preference.
+     * This code replaces all hyphens with the character string specified by
+     * 'set minus_sign "..."'   typically unicode character U+2212 "−".
+     * Use at your own risk.  Should be OK for graphical output, but text output
+     * will not be readable by standard formatted input routines.
+     */
+	if (use_minus_sign		/* set minussign */
+	    && minus_sign		/* current encoding provides one */
+	    && !table_mode		/* not used inside "set table" */
+	    && !(term->flags & TERM_IS_LATEX)	/* but LaTeX doesn't want it */
+	   ) {
+
+	    char *dotpos1 = dest;
+	    char *dotpos2;
+	    size_t newlength = strlen(minus_sign);
+
+	    /* dot is the default hyphen we will be replacing */
+	    int dot = '-';
+
+	    /* replace every dot by the contents of minus_sign */
+	    while ((dotpos2 = strchr(dotpos1,dot)) != NULL) {
+		if (newlength == 1) {	/* The normal case */
+		    *dotpos2 = *minus_sign;
+		    dotpos1++;
+		} else {		/* Some multi-byte minus marker */
+		    size_t taillength = strlen(dotpos2);
+		    dotpos1 = dotpos2 + newlength;
+		    if (dotpos1 + taillength > limit)
+			int_error(NO_CARET,
+				  "format too long due to minus_sign string");
+		    /* move tail end of string out of the way */
+		    memmove(dotpos1, dotpos2 + 1, taillength);
+		    /* insert minus_sign */
+		    memcpy(dotpos2, minus_sign, newlength);
+		}
+	    }
+	}
+
 	/* this was at the end of every single case, before: */
 	dest += strlen(dest);
 	++format;
@@ -974,13 +1047,6 @@ done:
 /* some macros for the error and warning functions below
  * may turn this into a utility function later
  */
-#define PRINT_MESSAGE_TO_STDERR				\
-do {							\
-    fprintf(stderr, "\n%s%s\n",				\
-	    current_prompt ? current_prompt : "",	\
-	    gp_input_line);				\
-} while (0)
-
 #define PRINT_SPACES_UNDER_PROMPT		\
 do {						\
     const char *p;				\
@@ -991,28 +1057,62 @@ do {						\
 	(void) fputc(' ', stderr);		\
 } while (0)
 
-#define PRINT_SPACES_UPTO_TOKEN						\
-do {									\
-    int i;								\
-									\
-    for (i = 0; i < token[t_num].start_index; i++)			\
-	(void) fputc((gp_input_line[i] == '\t') ? '\t' : ' ', stderr);	\
-} while(0)
-
-#define PRINT_CARET fputs("^\n",stderr);
-
-#define PRINT_FILE_AND_LINE						\
-if (!interactive) {							\
-    if (lf_head && lf_head->name)                                       \
-	fprintf(stderr, "\"%s\", line %d: ", lf_head->name, inline_num);\
-    else fprintf(stderr, "line %d: ", inline_num);			\
-}
-
-/* TRUE if command just typed; becomes FALSE whenever we
- * send some other output to screen.  If FALSE, the command line
- * will be echoed to the screen before the ^ error message.
+/*
+ * Echo back the command or data line that triggered an error,
+ * possibly with a caret indicating the token the was not accepted.
  */
-TBOOLEAN screen_ok;
+static void
+print_line_with_error(int t_num)
+{
+    int i;
+
+    if (t_num == DATAFILE) {
+	/* Print problem line from data file to the terminal */
+	df_showdata();
+
+    } else {
+
+	/* If the current line was built by concatenation of lines inside */
+	/* a {bracketed clause}, try to reconstruct the true line number  */
+	char *minimal_input_line = gp_input_line;
+	char *trunc;
+	while ((trunc = strrchr(gp_input_line, '\n')) != NULL) {
+	    int current = (t_num == NO_CARET) ? c_token : t_num;
+	    if (trunc < &gp_input_line[token[current].start_index]) {
+		minimal_input_line = trunc+1;
+		t_num = NO_CARET;
+		break;
+	    }
+	    *trunc = '\0';
+	    inline_num--;
+	}
+
+	if (t_num != NO_CARET) {
+	    /* Refresh current command line */
+	    if (!screen_ok)
+		fprintf(stderr, "\n%s%s\n",
+		    current_prompt ? current_prompt : "",
+		    minimal_input_line);
+
+	    PRINT_SPACES_UNDER_PROMPT;
+
+	    /* Print spaces up to token */
+	    for (i = 0; i < token[t_num].start_index; i++)
+		fputc((minimal_input_line[i] == '\t') ? '\t' : ' ', stderr);
+
+	    /* Print token */
+	    fputs("^\n",stderr);
+	}
+    }
+
+    PRINT_SPACES_UNDER_PROMPT;
+
+    if (!interactive) {
+	if (lf_head && lf_head->name)
+	    fprintf(stderr, "\"%s\", ", lf_head->name);
+	fprintf(stderr, "line %d: ", inline_num);
+    }
+}
 
 #if defined(VA_START) && defined(STDC_HEADERS)
 void
@@ -1030,17 +1130,8 @@ os_error(int t_num, const char *str, va_dcl)
 #endif /* VMS */
 
     /* reprint line if screen has been written to */
+    print_line_with_error(t_num);
 
-    if (t_num == DATAFILE) {
-	df_showdata();
-    } else if (t_num != NO_CARET) {	/* put caret under error */
-	if (!screen_ok)
-	    PRINT_MESSAGE_TO_STDERR;
-
-	PRINT_SPACES_UNDER_PROMPT;
-	PRINT_SPACES_UPTO_TOKEN;
-	PRINT_CARET;
-    }
     PRINT_SPACES_UNDER_PROMPT;
 
 #ifdef VA_START
@@ -1055,9 +1146,6 @@ os_error(int t_num, const char *str, va_dcl)
     fprintf(stderr, str, a1, a2, a3, a4, a5, a6, a7, a8);
 #endif
     putc('\n', stderr);
-
-    PRINT_SPACES_UNDER_PROMPT;
-    PRINT_FILE_AND_LINE;
 
 #ifdef VMS
     status[1] = vaxc$errno;
@@ -1089,19 +1177,7 @@ int_error(int t_num, const char str[], va_dcl)
     char error_message[128] = {'\0'};
 
     /* reprint line if screen has been written to */
-
-    if (t_num == DATAFILE) {
-	df_showdata();
-    } else if (t_num != NO_CARET) { /* put caret under error */
-	if (!screen_ok)
-	    PRINT_MESSAGE_TO_STDERR;
-
-	PRINT_SPACES_UNDER_PROMPT;
-	PRINT_SPACES_UPTO_TOKEN;
-	PRINT_CARET;
-    }
-    PRINT_SPACES_UNDER_PROMPT;
-    PRINT_FILE_AND_LINE;
+    print_line_with_error(t_num);
 
 #ifdef VA_START
     VA_START(args, str);
@@ -1149,19 +1225,7 @@ int_warn(int t_num, const char str[], va_dcl)
 #endif
 
     /* reprint line if screen has been written to */
-
-    if (t_num == DATAFILE) {
-	df_showdata();
-    } else if (t_num != NO_CARET) { /* put caret under error */
-	if (!screen_ok)
-	    PRINT_MESSAGE_TO_STDERR;
-
-	PRINT_SPACES_UNDER_PROMPT;
-	PRINT_SPACES_UPTO_TOKEN;
-	PRINT_CARET;
-    }
-    PRINT_SPACES_UNDER_PROMPT;
-    PRINT_FILE_AND_LINE;
+    print_line_with_error(t_num);
 
     fputs("warning: ", stderr);
 #ifdef VA_START
@@ -1201,7 +1265,11 @@ graph_error(const char *fmt, va_dcl)
     /* HBB 20001120: instead, copy the core code from int_error() to
      * here: */
     PRINT_SPACES_UNDER_PROMPT;
-    PRINT_FILE_AND_LINE;
+    if (!interactive) {
+	if (lf_head && lf_head->name)
+	    fprintf(stderr, "\"%s\", line %d: ", lf_head->name, inline_num);
+	else fprintf(stderr, "line %d: ", inline_num);
+    }
 
 # if defined(HAVE_VFPRINTF) || _LIBC
     vfprintf(stderr, fmt, args);
@@ -1222,11 +1290,12 @@ graph_error(const char *fmt, va_dcl)
 /*}}} */
 
 
-/* Squash spaces in the given string (DFK) */
-/* That is, reduce all multiple white-space chars to single spaces */
-/* Done in place. Currently used only by help_command() */
+/*
+ * Reduce all multiple white-space chars to single spaces (if remain == 1)
+ * or remove altogether (if remain == 0).  Modifies the original string.
+ */
 void
-squash_spaces(char *s)
+squash_spaces(char *s, int remain)
 {
     char *r = s;	/* reading point */
     char *w = s;	/* writing point */
@@ -1235,7 +1304,7 @@ squash_spaces(char *s)
     for (w = r = s; *r != NUL; r++) {
 	if (isspace((unsigned char) *r)) {
 	    /* white space; only copy if we haven't just copied a space */
-	    if (!space) {
+	    if (!space && remain > 0) {
 		space = TRUE;
 		*w++ = ' ';
 	    }			/* else ignore multiple spaces */
@@ -1521,8 +1590,8 @@ streq(const char *a, const char *b)
     while (isspace((unsigned char)*b))
 	b++;
 
-    enda = strlen(a) - 1;
-    endb = strlen(b) - 1;
+    enda = (*a) ? strlen(a) - 1 : 0;
+    endb = (*b) ? strlen(b) - 1 : 0;
 
     while (isspace((unsigned char)a[enda]))
 	enda--;
@@ -1543,7 +1612,8 @@ strappend(char **dest, size_t *size, size_t len, const char *src)
     size_t destlen = (len != 0) ? len : strlen(*dest);
     size_t srclen = strlen(src);
     if (destlen + srclen + 1 > *size) {
-	*size *= 2;
+	while (destlen + srclen + 1 > *size)
+	    *size *= 2;
 	*dest = (char *) gp_realloc(*dest, *size, "strappend");
     }
     memcpy(*dest + destlen, src, srclen + 1);

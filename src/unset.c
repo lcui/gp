@@ -1,5 +1,5 @@
 #ifndef lint
-static char *RCSid() { return RCSid("$Id: unset.c,v 1.206.2.6 2015/03/29 18:08:08 sfeam Exp $"); }
+static char *RCSid() { return RCSid("$Id: unset.c,v 1.206.2.14 2016/12/28 04:22:14 sfeam Exp $"); }
 #endif
 
 /* GNUPLOT - unset.c */
@@ -103,6 +103,8 @@ static void unset_logscale __PROTO((void));
 static void unset_mapping __PROTO((void));
 static void unset_margin __PROTO((t_position *));
 static void unset_missing __PROTO((void));
+static void unset_micro __PROTO((void));
+static void unset_minus_sign __PROTO((void));
 #ifdef USE_MOUSE
 static void unset_mouse __PROTO((void));
 #endif
@@ -152,8 +154,19 @@ unset_command()
     int i;
 
     c_token++;
+    save_token = c_token;
 
     set_iterator = check_for_iteration();
+    if (empty_iteration(set_iterator)) {
+	/* Skip iteration [i=start:end] where start > end */
+	while (!END_OF_COMMAND) c_token++;
+	set_iterator = cleanup_iteration(set_iterator);
+	return;
+    }
+    if (forever_iteration(set_iterator)) {
+	set_iterator = cleanup_iteration(set_iterator);
+	int_error(save_token, "unbounded iteration");
+    }
 
     found_token = lookup_table(&set_tbl[0],c_token);
 
@@ -316,6 +329,12 @@ unset_command()
 	df_commentschars = gp_strdup(DEFAULT_COMMENTS_CHARS);
 	df_unset_datafile_binary();
 	break;
+    case S_MICRO:
+	unset_micro();
+	break;
+    case S_MINUS_SIGN:
+	unset_minus_sign();
+	break;
     case S_MONOCHROME:
 	unset_monochrome();
 	break;
@@ -462,7 +481,7 @@ unset_command()
 	break;
     case S_Y2DTICS:
     case S_Y2MTICS:
-	unset_month_day_tics(FIRST_X_AXIS);
+	unset_month_day_tics(SECOND_Y_AXIS);
 	break;
     case S_MZTICS:
 	unset_minitics(FIRST_Z_AXIS);
@@ -893,6 +912,7 @@ unset_grid()
 	axis_array[i].gridmajor = FALSE;
 	axis_array[i].gridminor = FALSE;
     }
+    polar_grid_angle = 0;
 }
 
 
@@ -1167,6 +1187,20 @@ unset_margin(t_position *margin)
     margin->x = -1;
 }
 
+/* process 'unset micro' command */
+static void
+unset_micro()
+{
+    use_micro = FALSE;
+}
+
+/* process 'unset minus_sign' command */
+static void
+unset_minus_sign()
+{
+    use_minus_sign = FALSE;
+}
+
 /* process 'unset datafile' command */
 static void
 unset_missing()
@@ -1250,6 +1284,7 @@ unset_monochrome()
 	if (!END_OF_COMMAND)
 	    unset_linestyle(&first_mono_linestyle);
     }
+    term->flags &= ~TERM_MONOCHROME;
 }
 
 /* process 'unset offsets' command */
@@ -1797,6 +1832,7 @@ reset_command()
     clip_lines2 = FALSE;
 
     border_lp = default_border_lp;
+    border_layer = LAYER_FRONT;
     draw_border = 31;
 
     draw_surface = TRUE;
@@ -1817,6 +1853,7 @@ reset_command()
     mgrid_lp = default_grid_lp;
     polar_grid_angle = 0;
     grid_layer = LAYER_BEHIND;
+    grid_tics_in_front = FALSE;
 
     SET_REFRESH_OK(E_REFRESH_NOT_OK, 0);
 

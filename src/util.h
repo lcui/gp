@@ -1,5 +1,5 @@
 /*
- * $Id: util.h,v 1.44 2014/04/05 06:17:09 markisch Exp $
+ * $Id: util.h,v 1.44.2.3 2016/10/21 21:00:09 sfeam Exp $
  */
 
 /* GNUPLOT - util.h */
@@ -62,6 +62,12 @@ extern char *current_locale;	/* LC_TIME */
 /* degree sign */
 extern char degree_sign[8];
 
+/* special characters used by gprintf() */
+extern const char *micro;
+extern const char *minus_sign;
+extern TBOOLEAN use_micro;
+extern TBOOLEAN use_minus_sign;
+
 extern const char *current_prompt; /* needed by is_error() and friends */
 
 /* Functions exported by util.c: */
@@ -114,11 +120,7 @@ void int_warn __PROTO(());
 void graph_error __PROTO(());
 #endif
 
-/* FIXME HBB 20010726: should be moved to where help_comamnd() is, and
- * made static. Currently, that's command.c, but it should probably
- * move to help.c, instead.
- */
-void squash_spaces __PROTO((char *));
+void squash_spaces __PROTO((char *s, int remain));
 
 TBOOLEAN existdir __PROTO((const char *));
 TBOOLEAN existfile(const char *);

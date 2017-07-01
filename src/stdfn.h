@@ -1,5 +1,5 @@
 /*
- * $Id: stdfn.h,v 1.49 2014/05/01 19:50:15 broeker Exp $
+ * $Id: stdfn.h,v 1.49.2.2 2016/10/15 09:16:07 markisch Exp $
  */
 
 /* GNUPLOT - stdfn.h */
@@ -133,6 +133,10 @@ double strtod();
 #  endif
 # endif /* VMS */
 #endif /* HAVE_STDLIB_H */
+
+#ifdef HAVE_STDINT_H
+#include <stdint.h>
+#endif
 
 /* Deal with varargs functions */
 #if defined(HAVE_VFPRINTF) || defined(HAVE_DOPRNT)
@@ -349,12 +353,12 @@ int ms_snprintf(char *str, size_t size, const char * format, ...);
 # endif
 #endif
 
-#ifdef WIN32
+#ifdef _WIN32
 # include <windows.h>
 #endif
 
 /* sleep delay time, where delay is a double value */
-#if defined(HAVE_USLEEP)
+#if defined(HAVE_USLEEP) && !defined(_WIN32)
 #  define GP_SLEEP(delay) usleep((unsigned int) ((delay)*1e6))
 #  ifndef HAVE_SLEEP
 #    define HAVE_SLEEP
@@ -364,7 +368,7 @@ int ms_snprintf(char *str, size_t size, const char * format, ...);
 #  ifndef HAVE_SLEEP
 #    define HAVE_SLEEP
 #  endif
-#elif defined(WIN32)
+#elif defined(_WIN32)
 #  define GP_SLEEP(delay) win_sleep((DWORD) 1000*delay)
 #  ifndef HAVE_SLEEP
 #    define HAVE_SLEEP

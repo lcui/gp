@@ -1,5 +1,5 @@
 #ifndef lint
-static char *RCSid() { return RCSid("$Id: graph3d.c,v 1.311.2.7 2015/04/27 19:07:52 sfeam Exp $"); }
+static char *RCSid() { return RCSid("$Id: graph3d.c,v 1.311.2.20 2017/02/01 23:08:11 sfeam Exp $"); }
 #endif
 
 /* GNUPLOT - graph3d.c */
@@ -68,8 +68,6 @@ static char *RCSid() { return RCSid("$Id: graph3d.c,v 1.311.2.7 2015/04/27 19:07
 
 #include "plot.h"
 
-static int p_height;
-static int p_width;		/* pointsize * t->h_tic */
 static int key_entry_height;	/* bigger of t->v_char, pointsize*t->v_tick */
 static int key_title_height;
 static int key_title_extra;	/* allow room for subscript/superscript */
@@ -297,13 +295,11 @@ boundary3d(struct surface_points *plots, int count)
 
     titlelin = 0;
 
-    p_height = pointsize * t->v_tic;
-    p_width = pointsize * t->h_tic;
     if (key->swidth >= 0)
-	key_sample_width = key->swidth * t->h_char + pointsize * t->h_tic;
+	key_sample_width = key->swidth * t->h_char + t->h_tic;
     else
 	key_sample_width = 0;
-    key_entry_height = pointsize * t->v_tic * 1.25 * key->vert_factor;
+    key_entry_height = t->v_tic * 1.25 * key->vert_factor;
     if (key_entry_height < t->v_char) {
 	/* is this reasonable ? */
 	key_entry_height = t->v_char * key->vert_factor;
@@ -510,7 +506,7 @@ get_arrow3d(
 	map3d_position_r(&(arrow->end), ex, ey, "arrow");
 	*ex += *sx;
 	*ey += *sy;
-    } if (arrow->type == arrow_end_oriented) {
+    } else if (arrow->type == arrow_end_oriented) {
 	double aspect = (double)term->v_tic / (double)term->h_tic;
 	double radius;
 	int junkw, junkh;
@@ -652,7 +648,7 @@ do_3dplot(
 	base_z = Z_AXIS.min - (Z_AXIS.max - Z_AXIS.min) * xyplane.z;
 
     /* If we are to draw the bottom grid make sure zmin is updated properly. */
-    if (X_AXIS.ticmode || Y_AXIS.ticmode || some_grid_selected()) {
+    if (X_AXIS.ticmode || Y_AXIS.ticmode || (draw_border & 0x00f)) {
 	if (Z_AXIS.min > Z_AXIS.max) {
 	    floor_z = GPMAX(Z_AXIS.min, base_z);
 	    ceiling_z = GPMIN(Z_AXIS.max, base_z);
@@ -1393,10 +1389,7 @@ plot3d_impulses(struct surface_points *plot)
     struct iso_curve *icrvs = plot->iso_crvs;
     int colortype = plot->lp_properties.pm3d_color.type;
 
-    TBOOLEAN rgb_from_column = can_pm3d && plot->pm3d_color_from_column
-			&& plot->lp_properties.pm3d_color.value < 0.0;
-
-    if (colortype == TC_RGB && !rgb_from_column)
+    if (colortype == TC_RGB)
 	set_rgbcolor_const(plot->lp_properties.pm3d_color.lt);
 
     while (icrvs) {
@@ -1486,7 +1479,6 @@ plot3d_lines(struct surface_points *plot)
     double clip_x, clip_y, clip_z;
     struct iso_curve *icrvs = plot->iso_crvs;
     struct coordinate GPHUGE *points;
-    double lx[2], ly[2], lz[2];	/* two edge points */
     TBOOLEAN rgb_from_column;
 
     /* These are handled elsewhere.  */
@@ -1529,7 +1521,7 @@ plot3d_lines(struct surface_points *plot)
 				 * Calculate intersection point and draw
 				 * vector from there
 				 */
-				edge3d_intersect(points, i-1, i, &clip_x, &clip_y, &clip_z);
+				edge3d_intersect(&points[i-1], &points[i], &clip_x, &clip_y, &clip_z);
 
 				map3d_xy(clip_x, clip_y, clip_z, &xx0, &yy0);
 
@@ -1551,7 +1543,7 @@ plot3d_lines(struct surface_points *plot)
 			     * Calculate intersection point and draw
 			     * vector to it
 			     */
-			    edge3d_intersect(points, i-1, i, &clip_x, &clip_y, &clip_z);
+			    edge3d_intersect(&points[i-1], &points[i], &clip_x, &clip_y, &clip_z);
 
 			    map3d_xy(clip_x, clip_y, clip_z, &xx0, &yy0);
 
@@ -1560,15 +1552,13 @@ plot3d_lines(struct surface_points *plot)
 		    } else if (prev == OUTRANGE) {
 			/* from outrange to outrange */
 			if (clip_lines2) {
+			    double lx[2], ly[2], lz[2];	/* two edge points */
 			    /*
-			     * Calculate the two 3D intersection points
-			     * if present
+			     * Calculate the two 3D intersection points if present
 			     */
-			    if (two_edge3d_intersect(points, i-1, i, lx, ly, lz)) {
-
+			    if (two_edge3d_intersect(&points[i-1], &points[i], lx, ly, lz)) {
 				map3d_xy(lx[0], ly[0], lz[0], &x, &y);
 				map3d_xy(lx[1], ly[1], lz[1], &xx0, &yy0);
-
 				clip_move(x, y);
 				clip_vector(xx0, yy0);
 			    }
@@ -1608,7 +1598,6 @@ plot3d_lines_pm3d(struct surface_points *plot)
     double clip_x, clip_y, clip_z;
     struct coordinate GPHUGE *points;
     enum coord_type prev = UNDEFINED;
-    double lx[2], ly[2], lz[2];	/* two edge points */
     double z;
 
     /* just a shortcut */
@@ -1682,7 +1671,7 @@ plot3d_lines_pm3d(struct surface_points *plot)
 				     * Calculate intersection point and draw
 				     * vector from there
 				     */
-				    edge3d_intersect(points, i-step, i, &clip_x, &clip_y, &clip_z);
+				    edge3d_intersect(&points[i-step], &points[i], &clip_x, &clip_y, &clip_z);
 
 				    map3d_xy(clip_x, clip_y, clip_z, &xx0, &yy0);
 
@@ -1709,7 +1698,7 @@ plot3d_lines_pm3d(struct surface_points *plot)
 				 * vector to it
 				 */
 
-				edge3d_intersect(points, i-step, i, &clip_x, &clip_y, &clip_z);
+				edge3d_intersect(&points[i-step], &points[i], &clip_x, &clip_y, &clip_z);
 
 				map3d_xy(clip_x, clip_y, clip_z, &xx0, &yy0);
 
@@ -1724,13 +1713,11 @@ plot3d_lines_pm3d(struct surface_points *plot)
 			    /* from outrange to outrange */
 			    if (clip_lines2) {
 				/*
-				 * Calculate the two 3D intersection points
-				 * if present
+				 * Calculate the two 3D intersection points if present
 				 */
-				if (two_edge3d_intersect(points, i-step, i, lx, ly, lz)) {
-
+				double lx[2], ly[2], lz[2];
+				if (two_edge3d_intersect(&points[i-step], &points[i], lx, ly, lz)) {
 				    map3d_xy(lx[0], ly[0], lz[0], &x, &y);
-
 				    map3d_xy(lx[1], ly[1], lz[1], &xx0, &yy0);
 
 				    clip_move(x, y);
@@ -1774,6 +1761,7 @@ plot3d_points(struct surface_points *plot)
     int x, y;
     struct termentry *t = term;
     struct iso_curve *icrvs = plot->iso_crvs;
+    int interval = plot->lp_properties.p_interval;
 
     /* Set whatever we can that applies to every point in the loop */
     if (plot->lp_properties.p_type == PT_CHARACTER) {
@@ -1786,20 +1774,32 @@ plot3d_points(struct surface_points *plot)
     while (icrvs) {
 	struct coordinate GPHUGE *point;
 	int colortype = plot->lp_properties.pm3d_color.type;
-	TBOOLEAN rgb_from_column = plot->pm3d_color_from_column
-			&& colortype == TC_RGB
-			&& plot->lp_properties.pm3d_color.value < 0.0;
 
 	/* Apply constant color outside of the loop */
-	if (colortype == TC_RGB && !rgb_from_column)
+	if (colortype == TC_RGB)
 	    set_rgbcolor_const( plot->lp_properties.pm3d_color.lt );
 
 	for (i = 0; i < icrvs->p_count; i++) {
+	
+	    /* Only print 1 point per interval */
+	    if ((plot->plot_style == LINESPOINTS) && (interval) && (i % interval))
+		continue;
+
 	    point = &(icrvs->points[i]);
 	    if (point->type == INRANGE) {
 		map3d_xy(point->x, point->y, point->z, &x, &y);
 
 		if (!clip_point(x, y)) {
+
+		    /* A negative interval indicates we should blank */
+		    /* out the area behind the point symbol          */
+		    if (plot->plot_style == LINESPOINTS && interval < 0) {
+			(*t->set_color)(&background_fill);
+			(*t->pointsize)(pointsize * pointintervalbox);
+			(*t->point) (x, y, 6);
+			term_apply_lp_properties(&(plot->lp_properties));
+		    }
+
 		    check3d_for_variable_color(plot, point);
 
 		    if ((plot->plot_style == POINTSTYLE || plot->plot_style == LINESPOINTS)
@@ -2045,7 +2045,18 @@ setup_3d_box_corners()
 	front_x  = X_AXIS.max;
     }
 
-    if (surface_rot_x > 90) {
+    quadrant = surface_rot_x / 90;
+    if ((quadrant & 2) && !splot_map) {
+	double temp;
+	temp = front_y;
+	front_y = back_y;
+	back_y = temp;
+	temp = front_x;
+	front_x = back_x;
+	back_x = temp;
+    }
+
+    if ((quadrant + 1) & 2) {
 	/* labels on the back axes */
 	yaxis_x = back_x;
 	xaxis_y = back_y;
@@ -2205,7 +2216,9 @@ draw_3d_graphbox(struct surface_points *plot, int plot_num, WHICHGRID whichgrid,
 #define VERTICAL(mask,x,y,i,j,bottom,top)			\
 		if (draw_border&mask) {				\
 		    draw3d_line(bottom,top, &border_lp);	\
-		} else if (height[i][j] != depth[i][j]) {	\
+		} else if (height[i][j] != depth[i][j] && 	\
+			(X_AXIS.ticmode || Y_AXIS.ticmode ||	\
+			 draw_border & 0x00f)) {		\
 		    vertex a, b;				\
 		    map3d_xyz(x,y,depth[i][j],&a);		\
 		    map3d_xyz(x,y,height[i][j],&b);		\
@@ -2534,6 +2547,7 @@ draw_3d_graphbox(struct surface_points *plot, int plot_num, WHICHGRID whichgrid,
     /* PLACE ZLABEL - along the middle grid Z axis - eh ? */
     if (Z_AXIS.label.text
 	&& (splot_map == FALSE)
+	&& (current_layer == LAYER_FRONT || whichgrid == ALLGRID)
 	&& (draw_surface
 	    || (draw_contour & CONTOUR_SRF)
 	    || strpbrk(pm3d.where,"st") != NULL
@@ -3289,8 +3303,8 @@ plot3d_vectors(struct surface_points *plot)
     int i;
     double x1, y1, x2, y2;
     arrow_style_type ap;
-    struct coordinate GPHUGE *heads = plot->iso_crvs->points;
-    struct coordinate GPHUGE *tails = plot->iso_crvs->next->points;
+    struct coordinate GPHUGE *tails = plot->iso_crvs->points;
+    struct coordinate GPHUGE *heads = plot->iso_crvs->next->points;
 
     /* Only necessary once, unless variable arrow style */
     ap = plot->arrow_properties;
@@ -3312,9 +3326,33 @@ plot3d_vectors(struct surface_points *plot)
 	    check3d_for_variable_color(plot, &heads[i]);
 	}
 
+	/* The normal case: both ends in range */
 	if (heads[i].type == INRANGE && tails[i].type == INRANGE) {
-	    map3d_xy_double(heads[i].x, heads[i].y, heads[i].z, &x1, &y1);
-	    map3d_xy_double(tails[i].x, tails[i].y, tails[i].z, &x2, &y2);
+	    map3d_xy_double(tails[i].x, tails[i].y, tails[i].z, &x1, &y1);
+	    map3d_xy_double(heads[i].x, heads[i].y, heads[i].z, &x2, &y2);
+	    draw_clip_arrow((int)x1, (int)y1, (int)x2, (int)y2, ap.head);
+
+	/* "set clip two" - both ends out of range */
+	} else if (heads[i].type != INRANGE && tails[i].type != INRANGE) {
+	    double lx[2], ly[2], lz[2];
+	    if (!clip_lines2)
+		continue;
+	    two_edge3d_intersect(&tails[i], &heads[i], lx, ly, lz);
+	    map3d_xy_double(lx[0], ly[0], lz[0], &x1, &y1);
+	    map3d_xy_double(lx[1], ly[1], lz[1], &x2, &y2);
+	    draw_clip_arrow((int)x1, (int)y1, (int)x2, (int)y2, ap.head);
+
+	/* "set clip one" - one end out of range */
+	} else if (clip_lines1) {
+	    double clip_x, clip_y, clip_z;
+	    edge3d_intersect(&heads[i], &tails[i], &clip_x, &clip_y, &clip_z);
+	    if (tails[i].type == INRANGE) {
+		map3d_xy_double(tails[i].x, tails[i].y, tails[i].z, &x1, &y1);
+		map3d_xy_double(clip_x, clip_y, clip_z, &x2, &y2);
+	    } else {
+		map3d_xy_double(clip_x, clip_y, clip_z, &x1, &y1);
+		map3d_xy_double(heads[i].x, heads[i].y, heads[i].z, &x2, &y2);
+	    }
 	    draw_clip_arrow((int)x1, (int)y1, (int)x2, (int)y2, ap.head);
 	}
     }
@@ -3325,9 +3363,13 @@ check3d_for_variable_color(struct surface_points *plot, struct coordinate *point
 {
     int colortype = plot->lp_properties.pm3d_color.type;
 
+    TBOOLEAN rgb_from_column = plot->pm3d_color_from_column
+			&& plot->lp_properties.pm3d_color.type == TC_RGB
+			&& plot->lp_properties.pm3d_color.value < 0.0;
+
     switch( colortype ) {
     case TC_RGB:
-	if (plot->pm3d_color_from_column)
+	if (rgb_from_column)
 	    set_rgbcolor_var( (unsigned int)point->CRD_COLOR );
 	break;
     case TC_Z:

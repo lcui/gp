@@ -1,5 +1,5 @@
 #ifndef lint
-static char *RCSid() { return RCSid("$Id: save.c,v 1.256.2.14 2015/02/26 18:43:46 sfeam Exp $"); }
+static char *RCSid() { return RCSid("$Id: save.c,v 1.256.2.23 2017/02/25 05:20:33 sfeam Exp $"); }
 #endif
 
 /* GNUPLOT - save.c */
@@ -139,6 +139,7 @@ save_variables__sub(FILE *fp)
 	    if (strncmp(udv->udv_name,"GPVAL_",6)
 	     && strncmp(udv->udv_name,"MOUSE_",6)
 	     && strncmp(udv->udv_name,"$",1)
+	     && (strncmp(udv->udv_name,"ARG",3) || (strlen(udv->udv_name) != 4))
 	     && strncmp(udv->udv_name,"NaN",4)) {
 		fprintf(fp, "%s = ", udv->udv_name);
 		disp_value(fp, &(udv->udv_value), TRUE);
@@ -333,9 +334,7 @@ set bar %f %s\n",
     fprintf(fp, "set angles %s\n",
 	    (ang2rad == 1.0) ? "radians" : "degrees");
 
-    /* Grid back/front controls tics also. Make sure it is saved */
-    if (grid_layer >= 0)
-	fprintf(fp,"set tics %s\n", grid_layer == LAYER_BACK ? "back" : "front");
+    fprintf(fp,"set tics %s\n", grid_tics_in_front ? "front" : "back");
 
     if (! some_grid_selected())
 	fputs("unset grid\n", fp);
@@ -612,6 +611,9 @@ set encoding %s\n\
     if (!numeric_locale && !decimalsign)
 	fprintf(fp, "unset decimalsign\n");
 
+    fprintf(fp, "%sset micro\n", use_micro ? "" : "un");
+    fprintf(fp, "%sset minussign\n", use_minus_sign ? "" : "un");
+
     fputs("set view ", fp);
     if (splot_map == TRUE)
 	fprintf(fp, "map scale %g", mapview_scale);
@@ -792,7 +794,7 @@ set origin %g,%g\n",
 	save_textcolor(fp, &(lab.textcolor));				 \
 	if (lab.tag == ROTATE_IN_3D_LABEL_TAG)				 \
 	    fprintf(fp, " rotate parallel");				 \
-	if (lab.rotate)							 \
+	else if (lab.rotate)						 \
 	    fprintf(fp, " rotate by %d", lab.rotate);			 \
 	else								 \
 	    fprintf(fp, " norotate");					 \
@@ -959,6 +961,7 @@ set origin %g,%g\n",
     fputs(" size ", fp);
     save_position(fp, &color_box.size, FALSE);
     fprintf(fp, " %s ", color_box.layer ==  LAYER_FRONT ? "front" : "back");
+    fprintf(fp, " %sinvert ", color_box.invert ? "" : "no");
     if (color_box.border == 0) fputs("noborder", fp);
 	else if (color_box.border_lt_tag < 0) fputs("bdefault", fp);
 		 else fprintf(fp, "border %d", color_box.border_lt_tag);
@@ -1489,13 +1492,17 @@ save_data_func_style(FILE *fp, const char *which, enum PLOT_STYLE style)
     case SURFACEGRID:
 	fputs("surfaces\n", fp);
 	break;
+    case PARALLELPLOT:
+	fputs("parallelaxes\n", fp);
+	break;
     case PLOT_STYLE_NONE:
     default:
 	fputs("---error!---\n", fp);
     }
 }
 
-void save_dashtype(FILE *fp, int d_type, const t_dashtype *dt)
+void
+save_dashtype(FILE *fp, int d_type, const t_dashtype *dt)
 {
     /* this is indicated by LT_AXIS (lt 0) instead */
     if (d_type == DASHTYPE_AXIS)
@@ -1524,13 +1531,15 @@ save_linetype(FILE *fp, lp_style_type *lp, TBOOLEAN show_point)
 {
     if (lp->l_type == LT_NODRAW)
 	fprintf(fp, " lt nodraw");
-    else if (lp->l_type == LT_BLACK)
-	fprintf(fp, " lt black");
     else if (lp->l_type == LT_BACKGROUND)
 	fprintf(fp, " lt bgnd");
-    else if (lp->l_type < 0)
-	fprintf(fp, " lt %d", lp->l_type+1);
+    else if (lp->l_type == LT_AXIS)
+	fprintf(fp, " lt 0");
+    else if (lp->l_type == LT_DEFAULT)
+	;
 
+    if (lp->l_type == LT_BLACK && lp->pm3d_color.type == TC_LT)
+	fprintf(fp, " lt black");
     else if (lp->pm3d_color.type != TC_DEFAULT) {
 	fprintf(fp, " linecolor");
 	if (lp->pm3d_color.type == TC_LT)

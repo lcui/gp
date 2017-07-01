@@ -1,5 +1,5 @@
 #ifndef lint
-static char *RCSid() { return RCSid("$Id: command.c,v 1.292.2.7 2015/05/22 23:34:06 sfeam Exp $"); }
+static char *RCSid() { return RCSid("$Id: command.c,v 1.292.2.15 2017/03/02 18:24:52 sfeam Exp $"); }
 #endif
 
 /* GNUPLOT - command.c */
@@ -724,77 +724,55 @@ lower_command(void)
 
 #ifdef USE_MOUSE
 
-#define WHITE_AFTER_TOKEN(x) \
-(' ' == gp_input_line[token[x].start_index + token[x].length] \
-|| '\t' == gp_input_line[token[x].start_index + token[x].length] \
-|| '\0' == gp_input_line[token[x].start_index + token[x].length])
-
 /* process the 'bind' command */
+/* EAM - rewritten 2015 */
 void
 bind_command()
 {
-    char* lhs = (char*) 0;
-    char* rhs = (char*) 0;
+    char* lhs = NULL;
+    char* rhs = NULL;
     TBOOLEAN allwindows = FALSE;
     ++c_token;
 
-    if (!END_OF_COMMAND && equals(c_token,"!")) {
-	bind_remove_all();
-	++c_token;
-	return;
-    }
-
-    if (!END_OF_COMMAND && almost_equals(c_token,"all$windows")) {
+    if (almost_equals(c_token,"all$windows")) {
 	allwindows = TRUE;
 	c_token++;
     }
 
-    /* get left hand side: the key or key sequence */
-    if (!END_OF_COMMAND) {
+    /* get left hand side: the key or key sequence
+     * either (1) entire sequence is in quotes 
+     * or (2) sequence goes until the first whitespace
+     */
+    if (END_OF_COMMAND) {
+	; /* Fall through */
+    } else if (isstringvalue(c_token) && (lhs = try_to_get_string())) {
+	FPRINTF((stderr,"Got bind quoted lhs = \"%s\"\n",lhs));
+    } else {
 	char *first = gp_input_line + token[c_token].start_index;
-	int size = (int) (strchr(first, ' ') - first);
-	if (size < 0) {
-	    size = (int) (strchr(first, '\0') - first);
-	}
-	if (size < 0) {
-	    fprintf(stderr, "(bind_command) %s:%d\n", __FILE__, __LINE__);
-	    return;
-	}
-	if (!(isstring(c_token)) || !((lhs = try_to_get_string()))) {
-	    char *ptr = gp_alloc(size + 1, "bind_command->lhs");
-	    lhs = ptr;
-	    while (!END_OF_COMMAND) {
-		copy_str(ptr, c_token, token_len(c_token) + 1);
-		ptr += token_len(c_token);
-		if (WHITE_AFTER_TOKEN(c_token)) {
-		    break;
-		}
-		++c_token;
-	    }
-	    ++c_token;
-	}
+	int size = strcspn(first, " \";");
+	lhs = gp_alloc(size + 1, "bind_command->lhs");
+	strncpy(lhs, first, size);
+	lhs[size] = '\0';
+	FPRINTF((stderr,"Got bind unquoted lhs = \"%s\"\n",lhs));
+	while (gp_input_line + token[c_token].start_index < first+size)
+	    c_token++;
     }
 
-    /* get right hand side: the command. allocating the size
-     * of gp_input_line is too big, but shouldn't hurt too much. */
-    if (!END_OF_COMMAND) {
-	if (!(isstringvalue(c_token)) || !((rhs = try_to_get_string()))) {
-	    char *ptr = gp_alloc(strlen(gp_input_line) + 1, "bind_command->rhs");
-	    rhs = ptr;
-	    while (!END_OF_COMMAND) {
-		/* bind <lhs> ... ... ... */
-		copy_str(ptr, c_token, token_len(c_token) + 1);
-		ptr += token_len(c_token);
-		if (WHITE_AFTER_TOKEN(c_token)) {
-		    *ptr++ = ' ';
-		    *ptr = '\0';
-		}
-		c_token++;
-	    }
-	}
+    /* get right hand side: the command to bind
+     * either (1) quoted command
+     * or (2) the rest of the line
+     */
+    if (END_OF_COMMAND) {
+	; /* Fall through */
+    } else if (isstringvalue(c_token) && (rhs = try_to_get_string())) {
+        FPRINTF((stderr,"Got bind quoted rhs = \"%s\"\n",rhs));
+    } else {
+	int save_token = c_token;
+	while (!END_OF_COMMAND)
+	    c_token++;
+	m_capture( &rhs, save_token, c_token-1 );
+        FPRINTF((stderr,"Got bind unquoted rhs = \"%s\"\n",rhs));
     }
-
-    FPRINTF((stderr, "(bind_command) |%s| |%s|\n", lhs, rhs));
 
     /* bind_process() will eventually free lhs / rhs ! */
     bind_process(lhs, rhs, allwindows);
@@ -953,6 +931,7 @@ history_command()
 
     } else {
 	int n = 0;		   /* print only <last> entries */
+	char *tmp;
 	TBOOLEAN append = FALSE;   /* rewrite output file or append it */
 	static char *name = NULL;  /* name of the output file; NULL for stdout */
 
@@ -966,8 +945,9 @@ history_command()
 	if (!END_OF_COMMAND && isanumber(c_token)) {
 	    n = int_expression();
 	}
-	free(name);
-	if ((name = try_to_get_string())) {
+	if ((tmp = try_to_get_string())) {
+	    free(name);
+	    name = tmp;
 	    if (!END_OF_COMMAND && almost_equals(c_token, "ap$pend")) {
 		append = TRUE;
 		c_token++;
@@ -1362,7 +1342,7 @@ clause_reset_after_error()
 void
 timed_pause(double sleep_time)
 {
-#if defined(HAVE_USLEEP) && defined(USE_MOUSE)
+#if defined(HAVE_USLEEP) && defined(USE_MOUSE) && !defined(_WIN32)
     if (term->waitforinput)		/* If the terminal supports it */
 	while (sleep_time > 0.05) {	/* we poll 20 times a second */
 	    usleep(50000);		/* Sleep for 50 msec */
@@ -1592,6 +1572,7 @@ plot_command()
 {
     plot_token = c_token++;
     plotted_data_from_stdin = FALSE;
+    refresh_nplots = 0;
     SET_CURSOR_WAIT;
 #ifdef USE_MOUSE
     plot_mode(MODE_PLOT);
@@ -1605,6 +1586,9 @@ plot_command()
     add_udv_by_name("MOUSE_CTRL")->udv_undef = TRUE;
 #endif
     plotrequest();
+    /* Clear "hidden" flag for any plots that may have been toggled off */
+    if (term->modify_plots)
+	term->modify_plots(MODPLOTS_SET_VISIBLE, -1);
     SET_CURSOR_ARROW;
 }
 
@@ -1806,6 +1790,7 @@ refresh_request()
 
     if (   ((first_plot == NULL) && (refresh_ok == E_REFRESH_OK_2D))
         || ((first_3dplot == NULL) && (refresh_ok == E_REFRESH_OK_3D))
+	|| (!*replot_line && (refresh_ok == E_REFRESH_NOT_OK))
        )
 	int_error(NO_CARET, "no active plot; cannot refresh");
 
@@ -1983,6 +1968,7 @@ splot_command()
 {
     plot_token = c_token++;
     plotted_data_from_stdin = FALSE;
+    refresh_nplots = 0;
     SET_CURSOR_WAIT;
 #ifdef USE_MOUSE
     plot_mode(MODE_SPLOT);
@@ -1993,6 +1979,9 @@ splot_command()
     add_udv_by_name("MOUSE_BUTTON")->udv_undef = TRUE;
 #endif
     plot3drequest();
+    /* Clear "hidden" flag for any plots that may have been toggled off */
+    if (term->modify_plots)
+	term->modify_plots(MODPLOTS_SET_VISIBLE, -1);
     SET_CURSOR_ARROW;
 }
 
@@ -2332,12 +2321,13 @@ replotrequest()
 
     screen_ok = FALSE;
     num_tokens = scanner(&gp_input_line, &gp_input_line_len);
-    c_token = 1;		/* skip the 'plot' part */
+    c_token = 1;	/* Skip the "plot" token */
 
-    if (almost_equals(0,"s$plot"))
-	plot3drequest();
-    else if (almost_equals(0,"test"))
+    if (almost_equals(0,"test")) {
+    	c_token = 0;
 	test_command();
+    } else if (almost_equals(0,"s$plot"))
+	plot3drequest();
     else
 	plotrequest();
 }
@@ -2716,7 +2706,7 @@ help_command()
     if (len > 0)
 	helpbuf[len++] = ' ';	/* add a space */
     capture(helpbuf + len, start, c_token - 1, MAX_LINE_LEN - len);
-    squash_spaces(helpbuf + base);	/* only bother with new stuff */
+    squash_spaces(helpbuf + base, 1);	/* only bother with new stuff */
     len = strlen(helpbuf);
 
     /* now, a lone ? will print subtopics only */

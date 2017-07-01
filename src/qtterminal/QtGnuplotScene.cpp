@@ -186,7 +186,6 @@ void QtGnuplotScene::processEvent(QtGnuplotEventType type, QDataStream& in)
 	if (type == GEClear)
 	{
 		resetItems();
-		m_preserve_visibility = false;
 	}
 	else if (type == GELineWidth)
 	{
@@ -266,7 +265,14 @@ void QtGnuplotScene::processEvent(QtGnuplotEventType type, QDataStream& in)
 		QPolygonF polygon; in >> polygon;
 
 		if (!m_inKeySample)
+		{
+			// Distinguish between opaque and transparent pattern fill
+			if (m_currentFillStyle ==  FS_PATTERN)
+				m_currentPointsItem->addFilledPolygon(clipPolygon(polygon, false), 
+					QBrush(m_widget->backgroundColor()));
+
 			m_currentPointsItem->addFilledPolygon(clipPolygon(polygon, false), m_currentBrush);
+		}
 		else
 		{
 			flushCurrentPointsItem();
@@ -295,6 +301,7 @@ void QtGnuplotScene::processEvent(QtGnuplotEventType type, QDataStream& in)
 		int size        ; in >> size;
 		m_font.setFamily(fontName);
 		m_font.setPointSize(size);
+		m_font.setStyleStrategy(QFont::ForceOutline);	// pcf fonts die if rotated
 	}
 	else if (type == GEPoint)
 	{
@@ -553,7 +560,9 @@ void QtGnuplotScene::processEvent(QtGnuplotEventType type, QDataStream& in)
 			// Draw an invisible grey rectangle in the key box.
 			// It will be set to visible if the plot is toggled off.
 			QtGnuplotKeybox *keybox = &m_key_boxes[m_currentPlotNumber-1];
-			QGraphicsRectItem *statusBox = addRect(*keybox, Qt::NoPen, Qt::Dense4Pattern);
+			m_currentBrush.setColor(Qt::lightGray);
+			m_currentBrush.setStyle(Qt::Dense4Pattern);
+			QGraphicsRectItem *statusBox = addRect(*keybox, Qt::NoPen, m_currentBrush);
 			statusBox->setZValue(m_currentZ-1);
 			keybox->showStatus(statusBox);
 		}
@@ -570,13 +579,16 @@ void QtGnuplotScene::processEvent(QtGnuplotEventType type, QDataStream& in)
 		QPointF point; in >> point;
 		int option; in >> option;
 		QGraphicsRectItem *rectItem;
+		QRectF outline;
 
 		/* Must match the definition in ../term_api.h */
 		enum t_textbox_options {
-		       TEXTBOX_INIT = 0,
-		       TEXTBOX_OUTLINE,
-		       TEXTBOX_BACKGROUNDFILL,
-		       TEXTBOX_MARGINS
+			TEXTBOX_INIT = 0,
+			TEXTBOX_OUTLINE,
+			TEXTBOX_BACKGROUNDFILL,
+			TEXTBOX_MARGINS,
+			TEXTBOX_FINISH,
+			TEXTBOX_GREY
 		};
 
 		switch (option) {
@@ -587,7 +599,10 @@ void QtGnuplotScene::processEvent(QtGnuplotEventType type, QDataStream& in)
 			break;
 		case TEXTBOX_OUTLINE:
 			/* Stroke bounding box */
-			rectItem = addRect(m_currentTextBox, m_currentPen, Qt::NoBrush);
+			outline = m_currentTextBox.adjusted(
+				 -m_textMargin.x(), -m_textMargin.y(),
+				  m_textMargin.x(), m_textMargin.y());
+			rectItem = addRect(outline, m_currentPen, Qt::NoBrush);
 			rectItem->setZValue(m_currentZ++);
 			m_currentGroup.append(rectItem);
 			m_inTextBox = false;
@@ -596,13 +611,18 @@ void QtGnuplotScene::processEvent(QtGnuplotEventType type, QDataStream& in)
 			/* Fill bounding box */
 			m_currentBrush.setColor(m_widget->backgroundColor());
 			m_currentBrush.setStyle(Qt::SolidPattern);
-			rectItem = addRect(m_currentTextBox, Qt::NoPen, m_currentBrush);
+			outline = m_currentTextBox.adjusted(
+				 -m_textMargin.x(), -m_textMargin.y(),
+				  m_textMargin.x(), m_textMargin.y());
+			rectItem = addRect(outline, Qt::NoPen, m_currentBrush);
 			rectItem->setZValue(m_currentZ++);
 			m_currentGroup.append(rectItem);
 			m_inTextBox = false;
 			break;
 		case TEXTBOX_MARGINS:
 			/* Set margins of bounding box */
+			m_textMargin = point;
+			m_textMargin *= QFontMetrics(m_font).averageCharWidth();
 			break;
 		}
 	}
@@ -671,6 +691,7 @@ void QtGnuplotScene::setBrushStyle(int style)
 	int fillstyle = style & 0xf;
 
 	m_currentBrush.setStyle(Qt::SolidPattern);
+	m_currentFillStyle = fillstyle;
 
 	QColor color = m_currentPen.color();
 
@@ -689,7 +710,6 @@ void QtGnuplotScene::setBrushStyle(int style)
 		}
 	}
 	else if ((fillstyle == FS_TRANSPARENT_PATTERN) || (fillstyle == FS_PATTERN))
-		/// @todo color & transparent. See other terms
 		m_currentBrush.setStyle(QtGnuplot::brushes[abs(fillpar) % 8]);
 	else if (fillstyle == FS_EMPTY) // fill with background plot->color
 		color = m_widget->backgroundColor();
@@ -840,19 +860,22 @@ void QtGnuplotScene::mouseReleaseEvent(QGraphicsSceneMouseEvent* event)
 		int(event->scenePos().x()), int(event->scenePos().y()), button, time, m_widget);
 	m_watches[button].start();
 
-	/* Check for click in one of the keysample boxes */
-	int n = m_key_boxes.count();
-	for (int i = 0; i < n; i++) {
-		if (m_key_boxes[i].contains(m_lastMousePos)) {
-			if (m_plot_group[i]->isVisible()) {
-				m_plot_group[i]->setVisible(false);
-				m_key_boxes[i].setHidden(true);
-			} else {
-				m_plot_group[i]->setVisible(true);
-				m_key_boxes[i].setHidden(false);
-			}
-			break;
-		}
+	/* Check for left click in one of the keysample boxes */
+	if (button == 1) {
+	    int n = m_key_boxes.count();
+	    for (int i = 0; i < n; i++) {
+		    if (m_key_boxes[i].contains(m_lastMousePos)) {
+			    if (m_plot_group[i]->isVisible()) {
+				    m_plot_group[i]->setVisible(false);
+				    m_key_boxes[i].setHidden(true);
+			    } else {
+				    m_plot_group[i]->setVisible(true);
+				    m_key_boxes[i].setHidden(false);
+			    }
+			    m_preserve_visibility = true;
+			    break;
+		    }
+	    }
 	}
 
 	QGraphicsScene::mouseReleaseEvent(event);
@@ -897,12 +920,19 @@ void QtGnuplotScene::keyPressEvent(QKeyEvent* event)
 			case Qt::Key_F4       : key = GP_KP_F4       ; break;
 			case Qt::Key_Insert   : key = GP_KP_Insert   ; break;
 			case Qt::Key_End      : key = GP_KP_End      ; break;
+			case Qt::Key_Home     : key = GP_KP_Home     ; break;
+#ifdef __APPLE__
+			case Qt::Key_Down     : key = GP_Down        ; break;
+			case Qt::Key_Left     : key = GP_Left        ; break;
+			case Qt::Key_Right    : key = GP_Right       ; break;
+			case Qt::Key_Up       : key = GP_Up          ; break;
+#else
 			case Qt::Key_Down     : key = GP_KP_Down     ; break;
-			case Qt::Key_PageDown : key = GP_KP_Page_Down; break;
 			case Qt::Key_Left     : key = GP_KP_Left     ; break;
 			case Qt::Key_Right    : key = GP_KP_Right    ; break;
-			case Qt::Key_Home     : key = GP_KP_Home     ; break;
 			case Qt::Key_Up       : key = GP_KP_Up       ; break;
+#endif
+			case Qt::Key_PageDown : key = GP_KP_Page_Down; break;
 			case Qt::Key_PageUp   : key = GP_KP_Page_Up  ; break;
 			case Qt::Key_Delete   : key = GP_KP_Delete   ; break;
 			case Qt::Key_Equal    : key = GP_KP_Equal    ; break;

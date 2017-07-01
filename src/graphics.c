@@ -1,5 +1,5 @@
 #ifndef lint
-static char *RCSid() { return RCSid("$Id: graphics.c,v 1.464.2.10 2015/03/19 17:35:39 sfeam Exp $"); }
+static char *RCSid() { return RCSid("$Id: graphics.c,v 1.464.2.33 2017/02/01 23:08:11 sfeam Exp $"); }
 #endif
 
 /* GNUPLOT - graphics.c */
@@ -77,11 +77,6 @@ int    bar_layer = LAYER_FRONT;
 /* set by tic_callback - how large to draw polar radii */
 static double largest_polar_circle;
 
-static int p_width, p_height;	/* pointsize * { t->h_tic | t->v_tic } */
-
-/* used for filled points */
-static t_colorspec background_fill = BACKGROUND_COLORSPEC;
-
 /*}}} */
 
 /* Status information for stacked histogram plots */
@@ -110,7 +105,7 @@ static void plot_boxplot __PROTO((struct curve_points * plot));
 
 static void place_labels __PROTO((struct text_label * listhead, int layer, TBOOLEAN clip));
 static void place_arrows __PROTO((int layer));
-static void place_grid __PROTO((void));
+static void place_grid __PROTO((int layer));
 static void place_raxis __PROTO((void));
 static void place_parallel_axes __PROTO((struct curve_points *plots, int pcount, int layer));
 
@@ -131,8 +126,6 @@ static void map_position_double __PROTO((struct position* pos, double* x, double
 
 static void attach_title_to_plot __PROTO((struct curve_points *this_plot, legend_key *key));
 
-static void hyperplane_between_points __PROTO((double *p1, double *p2, double *w, double *b));
-
 #ifdef EAM_OBJECTS
 static void plot_circles __PROTO((struct curve_points *plot));
 static void plot_ellipses __PROTO((struct curve_points *plot));
@@ -147,10 +140,7 @@ static void plot_parallel __PROTO((struct curve_points *plot));
 #define ERRORBARTIC GPMAX((t->h_tic/2),1)
 
 /* used by compare_ypoints via q_sort from filter_boxplot */
-/* It would be cleaner to make this a thunk passed to qsort_r()
- * but that is not be portable across linux/OSX/MSWin
- */
-static double *boxplot_factor_p;
+static TBOOLEAN boxplot_factor_sort_required;
 
 /* For tracking exit and re-entry of bounding curves that extend out of plot */
 /* these must match the bit values returned by clip_point(). */
@@ -158,8 +148,6 @@ static double *boxplot_factor_p;
 #define RIGHT_EDGE	2
 #define BOTTOM_EDGE	4
 #define TOP_EDGE	8
-
-#define clip_fill	((plot->filledcurves_options.closeto == FILLEDCURVES_CLOSED) || clip_lines2)
 
 #define f_max(a,b) GPMAX((a),(b))
 #define f_min(a,b) GPMIN((a),(b))
@@ -204,33 +192,38 @@ get_arrow(
 }
 
 static void
-place_grid()
+place_grid(int layer)
 {
     struct termentry *t = term;
+    int save_lgrid = grid_lp.l_type;
+    int save_mgrid = mgrid_lp.l_type;
 
     term_apply_lp_properties(&border_lp);	/* border linetype */
     largest_polar_circle = 0;
+
+    /* We used to go through this process only once, drawing both the grid lines
+     * and the axis tic labels.  Now we allow for a separate pass that redraws only
+     * the labels if the user has chosen "set tics front".
+     * This guarantees that the axis tic labels lie on top of all grid lines.
+     */
+    if (layer == LAYER_FOREGROUND) 
+	grid_lp.l_type = mgrid_lp.l_type = LT_NODRAW;
 
     /* select first mapping */
     x_axis = FIRST_X_AXIS;
     y_axis = FIRST_Y_AXIS;
 
     /* label first y axis tics */
-    axis_output_tics(FIRST_Y_AXIS, &ytic_x, FIRST_X_AXIS,
-		     /* (GRID_Y | GRID_MY), */ ytick2d_callback);
+    axis_output_tics(FIRST_Y_AXIS, &ytic_x, FIRST_X_AXIS, ytick2d_callback);
     /* label first x axis tics */
-    axis_output_tics(FIRST_X_AXIS, &xtic_y, FIRST_Y_AXIS,
-		     /* (GRID_X | GRID_MX), */ xtick2d_callback);
+    axis_output_tics(FIRST_X_AXIS, &xtic_y, FIRST_Y_AXIS, xtick2d_callback);
 
     /* select second mapping */
     x_axis = SECOND_X_AXIS;
     y_axis = SECOND_Y_AXIS;
 
-    axis_output_tics(SECOND_Y_AXIS, &y2tic_x, SECOND_X_AXIS,
-		     /* (GRID_Y2 | GRID_MY2), */ ytick2d_callback);
-    axis_output_tics(SECOND_X_AXIS, &x2tic_y, SECOND_Y_AXIS,
-		     /* (GRID_X2 | GRID_MX2), */ xtick2d_callback);
-
+    axis_output_tics(SECOND_Y_AXIS, &y2tic_x, SECOND_X_AXIS, ytick2d_callback);
+    axis_output_tics(SECOND_X_AXIS, &x2tic_y, SECOND_Y_AXIS, xtick2d_callback);
 
     /* select first mapping */
     x_axis = FIRST_X_AXIS;
@@ -256,7 +249,7 @@ place_grid()
     }
 
     /* Radial lines */
-    if (polar_grid_angle) {
+    if (polar_grid_angle > 0) {
 	double theta = 0;
 	int ox = map_x(0);
 	int oy = map_y(0);
@@ -269,6 +262,9 @@ place_grid()
 	draw_clip_line(ox, oy, map_x(largest_polar_circle * cos(theta)), map_y(largest_polar_circle * sin(theta)));
     }
 
+    /* Restore the grid line types if we had turned them off to draw labels only */
+    grid_lp.l_type = save_lgrid;
+    mgrid_lp.l_type = save_mgrid;
 }
 
 static void
@@ -550,7 +546,7 @@ do_plot(struct curve_points *plots, int pcount)
 
     /* DRAW TICS AND GRID */
     if (grid_layer == LAYER_BACK || grid_layer == LAYER_BEHIND)
-	place_grid();
+	place_grid(grid_layer);
 
     /* DRAW ZERO AXES and update axis->term_zero */
     axis_draw_2d_zeroaxis(FIRST_X_AXIS,FIRST_Y_AXIS);
@@ -764,10 +760,18 @@ do_plot(struct curve_points *plots, int pcount)
 		break;
 
 	    case FILLEDCURVES:
-		if (this_plot->filledcurves_options.closeto == FILLEDCURVES_ATY1
+		if (this_plot->filledcurves_options.closeto == FILLEDCURVES_BETWEEN) {
+		    plot_betweencurves(this_plot);
+		} else if (!this_plot->plot_smooth &&
+		   (this_plot->filledcurves_options.closeto == FILLEDCURVES_ATY1
 		||  this_plot->filledcurves_options.closeto == FILLEDCURVES_ATY2
-		||  this_plot->filledcurves_options.closeto == FILLEDCURVES_ATR
-		||  this_plot->filledcurves_options.closeto == FILLEDCURVES_BETWEEN) {
+		||  this_plot->filledcurves_options.closeto == FILLEDCURVES_ATR)) {
+		    /* Smoothing may have trashed the original contents	*/
+		    /* of the 2nd y data column, so piggybacking on the	*/
+		    /* code for FILLEDCURVES_BETWEEN will not work.	*/
+		    /* FIXME: Maybe piggybacking is always a bad idea?		*/
+		    /* IIRC the original rationale was to get better clipping	*/
+		    /* but the general polygon clipping code should now work.	*/
 		    plot_betweencurves(this_plot);
 		} else {
 		    plot_filledcurves(this_plot);
@@ -873,9 +877,13 @@ do_plot(struct curve_points *plots, int pcount)
 
     /* DRAW TICS AND GRID */
     if (grid_layer == LAYER_FRONT)
-	place_grid();
+	place_grid(grid_layer);
     if (polar && raxis)
 	place_raxis();
+
+    /* Redraw the axis tic labels and tic marks if "set tics front" */
+    if (grid_tics_in_front)
+	place_grid(LAYER_FOREGROUND);
 
     /* DRAW ZERO AXES */
     /* redraw after grid so that axes linetypes are on top */
@@ -1123,9 +1131,11 @@ finish_filled_curve(
 		points += 2;
 		/* Fall through */
 	case FILLEDCURVES_BETWEEN:
+		/* fill_between() allocated an extra point for the above/below flag */
+		if (filledcurves_options->closeto == FILLEDCURVES_BETWEEN)
+		    side = (corners[points].x > 0) ? 1 : -1;
+		/* Fall through */
 	case FILLEDCURVES_ATR:
-		side = (corners[points].x > 0) ? 1 : -1;
-
 		/* Prevent 1-pixel overlap of component rectangles, which */
 		/* causes vertical stripe artifacts for transparent fill  */
 		if (plot->fill_properties.fillstyle == FS_TRANSPARENT_SOLID) {
@@ -1227,7 +1237,10 @@ plot_filledcurves(struct curve_points *plot)
 		x = map_x(plot->points[i].x);
 		y = map_y(plot->points[i].y);
 		corners[points].x = x;
-		corners[points++].y = y;
+		corners[points].y = y;
+		if (points == 0)
+		    check_for_variable_color(plot, &plot->varcolor[i]);
+		points++;
 		break;
 	case UNDEFINED:
 		/* UNDEFINED flags a blank line in the input file.
@@ -1782,6 +1795,7 @@ plot_boxes(struct curve_points *plot, int xaxis_y)
     double dxl, dxr, dyt;
     struct termentry *t = term;
     enum coord_type prev = UNDEFINED;	/* type of previous point */
+    int lastdef = 0;			/* most recent point that was not UNDEFINED */
     double dyb = 0.0;
 
     /* The stackheight[] array contains the y coord of the top   */
@@ -1820,36 +1834,35 @@ plot_boxes(struct curve_points *plot, int xaxis_y)
 	case INRANGE:{
 		if (plot->points[i].z < 0.0) {
 		    /* need to auto-calc width */
-		    if (prev != UNDEFINED) {
-			if (boxwidth < 0)
-			    dxl = (plot->points[i-1].x - plot->points[i].x) / 2.0;
-			else if (! boxwidth_is_absolute)
-			    dxl = (plot->points[i-1].x - plot->points[i].x) * boxwidth / 2.0;
-			else /* Hits here on 3 column BOXERRORBARS */
-			    dxl = -boxwidth / 2.0;
-		    } else {
-			if (boxwidth > 0 && boxwidth_is_absolute)
-			    dxl = -boxwidth / 2.0;
-			else
-			    dxl = 0.0;
-		    }
+		    if (boxwidth < 0)
+			dxl = (plot->points[lastdef].x - plot->points[i].x) / 2.0;
+		    else if (!boxwidth_is_absolute)
+			dxl = (plot->points[lastdef].x - plot->points[i].x) * boxwidth / 2.0;
+		    else
+			dxl = -boxwidth / 2.0;
 
 		    if (i < plot->p_count - 1) {
-			if (plot->points[i + 1].type != UNDEFINED) {
-			    if (boxwidth < 0)
-				dxr = (plot->points[i+1].x - plot->points[i].x) / 2.0;
-			    else if (! boxwidth_is_absolute)
-				dxr = (plot->points[i+1].x - plot->points[i].x) * boxwidth / 2.0;
-			    else /* Hits here on 3 column BOXERRORBARS */
-				dxr = boxwidth / 2.0;
-			} else {
+			int nextdef;
+			for (nextdef = i+1; nextdef < plot->p_count; nextdef++)
+			    if (plot->points[nextdef].type != UNDEFINED)
+				break;
+			if (nextdef == plot->p_count)	/* i is the last non-UNDEFINED point */
+			    nextdef = i;
+			if (boxwidth < 0)
+			    dxr = (plot->points[nextdef].x - plot->points[i].x) / 2.0;
+			else if (!boxwidth_is_absolute)
+			    dxr = (plot->points[nextdef].x - plot->points[i].x) * boxwidth / 2.0;
+			else /* Hits here on 3 column BOXERRORBARS */
+			    dxr = boxwidth / 2.0;
+
+			if (plot->points[nextdef].type == UNDEFINED)
 			    dxr = -dxl;
-			}
+
 		    } else {
 			dxr = -dxl;
 		    }
 
-		    if (prev == UNDEFINED)
+		    if (prev == UNDEFINED && lastdef == 0)
 			dxl = -dxr;
 
 		    dxl = plot->points[i].x + dxl;
@@ -2012,7 +2025,8 @@ plot_boxes(struct curve_points *plot, int xaxis_y)
 	}			/* switch point-type */
 
 	prev = plot->points[i].type;
-
+	if (prev != UNDEFINED)
+	    lastdef = i;
     }				/*loop */
 }
 
@@ -2026,6 +2040,7 @@ plot_points(struct curve_points *plot)
 {
     int i;
     int x, y;
+    int p_width, p_height;
     int interval = plot->lp_properties.p_interval;
     struct termentry *t = term;
 
@@ -2035,6 +2050,10 @@ plot_points(struct curve_points *plot)
 	if (plot->labels->font && plot->labels->font[0])
 	    (*t->set_font) (plot->labels->font);
 	(*t->justify_text) (CENTRE);
+    }
+    if (clip_points) {
+	p_width = t->h_tic * plot->lp_properties.p_size;
+	p_height = t->v_tic * plot->lp_properties.p_size;
     }
 
     for (i = 0; i < plot->p_count; i++) {
@@ -2071,7 +2090,7 @@ plot_points(struct curve_points *plot)
 		check_for_variable_color(plot, &plot->varcolor[i]);
 
 		/* The normal case */
-		if (plot->lp_properties.p_type >= 0)
+		if (plot->lp_properties.p_type >= -1)
 		    (*t->point) (x, y, plot->lp_properties.p_type);
 
 		/* Print special character rather than drawn symbol */
@@ -2687,12 +2706,11 @@ compare_ypoints(SORTFUNC_ARGS arg1, SORTFUNC_ARGS arg2)
     struct coordinate const *p1 = arg1;
     struct coordinate const *p2 = arg2;
 
-    if (boxplot_factor_p) {
-	/* Push points with the wrong index (a.k.a. "factor") to the back */
-	double *index = boxplot_factor_p;
-	if (p1->z != *index && p2->z == *index)
+    if (boxplot_factor_sort_required) {
+	/* Primary sort key is the "factor" */
+	if (p1->z > p2->z)
 	    return (1);
-	if (p1->z == *index && p2->z != *index)
+	if (p1->z < p2->z)
 	    return (-1);
     }
 
@@ -2704,34 +2722,27 @@ compare_ypoints(SORTFUNC_ARGS arg1, SORTFUNC_ARGS arg2)
 }
 
 int
-filter_boxplot(struct curve_points *plot, int index)
+filter_boxplot(struct curve_points *plot)
 {
-    double real_index;
     int N = plot->p_count;
     int i;
 
-    if (index == DEFAULT_BOXPLOT_FACTOR) {
-	/* Force any undefined points to the end of the list by y value */
-	for (i=0; i<N; i++)
-	    if (plot->points[i].type == UNDEFINED)
-		plot->points[i].y = VERYLARGE;
-	boxplot_factor_p = NULL;
-    } else if (boxplot_opts.sort_factors && plot->boxplot_factor_order) {
-	/* Do we have to show the boxplots in alphabetical order of factors? */
-	real_index = plot->boxplot_factor_order[index];
-	boxplot_factor_p = &real_index;
-    } else {
-	real_index = index;
-	boxplot_factor_p = &real_index;
-    }
+    /* Force any undefined points to the end of the list by y value */
+    for (i=0; i<N; i++)
+	if (plot->points[i].type == UNDEFINED)
+	    plot->points[i].y = plot->points[i].z = VERYLARGE;
 
     /* Sort the points to find median and quartiles */
+    if (plot->boxplot_factors > 1)
+	boxplot_factor_sort_required = TRUE;
     qsort(plot->points, N, sizeof(struct coordinate), compare_ypoints);
 
     /* Return a count of well-defined points with this index */
-    while (plot->points[N-1].type == UNDEFINED
-	|| (boxplot_factor_p != NULL && plot->points[N-1].z != *boxplot_factor_p))
-	N--;
+    /* FIXME: This could be moved into plot_boxplot() */
+    while (plot->points[N-1].type == UNDEFINED) {
+	    N--;
+	    if (N == 0) break;
+	}
 
     return N;
 }
@@ -2742,48 +2753,73 @@ plot_boxplot(struct curve_points *plot)
     int N;
     struct coordinate *save_points = plot->points;
     int saved_p_count = plot->p_count;
+
+    struct coordinate *subset_points;
+    int subset_count, true_count;
+    struct text_label *subset_label = plot->labels;
+
     struct coordinate candle;
     double median, quartile1, quartile3;
     double whisker_top, whisker_bot;
+
     int level;
     int levels = plot->boxplot_factors;
     if (levels == 0)
 	levels = 1;
 
-    /* The entire collection of points was already sorted on y and counted
-     * in boxplot_range_fiddling() via filter_boxplot(plot, DEFAULT_BOXPLOT_FACTOR)
-     * That's fine if all point are in the same boxplot, but if there are
-     * multiple plots each containing one category (a.k.a. "factor" a.k.a. "level")
-     * then we need to filter and resort points for each one separately.
+    /* The entire collection of points was already sorted in filter_boxplot()
+     * called from boxplot_range_fiddling().  That sort used the category
+     * (a.k.a. "factor" a.k.a. "level") as a primary key and the y value as
+     * a secondary key.  That is sufficient for describing all points in a
+     * single boxplot, but if we want a separate boxplot for each category
+     * then additional bookkeeping is required.
      */
-    N = plot->p_count;
-
     for (level=0; level<levels; level++) {
-	if (levels > 1)
-	    N = filter_boxplot(plot, level);
+	if (levels == 1) {
+	    subset_points = save_points;
+	    subset_count = saved_p_count;
+	} else {
+	    subset_label = subset_label->next;
+	    true_count = 0;
+	    /* advance to first point in subset */
+	    for (subset_points = save_points;
+		 subset_points->z != subset_label->tag;
+		 subset_points++, true_count++)
+		;
+	    /* count well-defined points in this subset */
+	    for (subset_count=0;
+		 true_count < saved_p_count
+		    && subset_points[subset_count].z == subset_label->tag;
+		 subset_count++, true_count++) {
+			if (subset_points[subset_count].type == UNDEFINED)
+			    break;
+		}
+	}
 
 	/* Not enough points left to make a boxplot */
+	N = subset_count;
 	if (N < 4) {
-	    candle.x = plot->points->x + boxplot_opts.separation * level;
+	    candle.x = subset_points->x + boxplot_opts.separation * level;
 	    candle.yhigh = -VERYLARGE;
 	    candle.ylow = VERYLARGE;
+	    plot->p_count = N;
 	    goto outliers;
 	}
 
 	if ((N & 0x1) == 0)
-	    median = 0.5 * (plot->points[N/2 - 1].y + plot->points[N/2].y);
+	    median = 0.5 * (subset_points[N/2 - 1].y + subset_points[N/2].y);
 	else
-	    median = plot->points[(N-1)/2].y;
+	    median = subset_points[(N-1)/2].y;
 	if ((N & 0x3) == 0)
-	    quartile1 = 0.5 * (plot->points[N/4 - 1].y + plot->points[N/4].y);
+	    quartile1 = 0.5 * (subset_points[N/4 - 1].y + subset_points[N/4].y);
 	else
-	    quartile1 = plot->points[(N+3)/4 - 1].y;
+	    quartile1 = subset_points[(N+3)/4 - 1].y;
 	if ((N & 0x3) == 0)
-	    quartile3 = 0.5 * (plot->points[N - N/4].y + plot->points[N - N/4 - 1].y);
+	    quartile3 = 0.5 * (subset_points[N - N/4].y + subset_points[N - N/4 - 1].y);
 	else
-	    quartile3 = plot->points[N - (N+3)/4].y;
+	    quartile3 = subset_points[N - (N+3)/4].y;
 
-	    FPRINTF((stderr,"Boxplot: quartile boundaries for %d points: %g %g %g\n",
+	FPRINTF((stderr,"Boxplot: quartile boundaries for %d points: %g %g %g\n",
 			N, quartile1, median, quartile3));
 
 	/* Set the whisker limits based on the user-defined style */
@@ -2793,14 +2829,14 @@ plot_boxplot(struct curve_points *plot)
 	    int i;
 	    whisker_bot = quartile1 - whisker_len;
 	    for (i=0; i<N; i++)
-		if (plot->points[i].y >= whisker_bot) {
-		    whisker_bot = plot->points[i].y;
+		if (subset_points[i].y >= whisker_bot) {
+		    whisker_bot = subset_points[i].y;
 		    break;
 		}
 	    whisker_top = quartile3 + whisker_len;
 	    for (i=N-1; i>= 0; i--)
-		if (plot->points[i].y <= whisker_top) {
-		    whisker_top = plot->points[i].y;
+		if (subset_points[i].y <= whisker_top) {
+		    whisker_top = subset_points[i].y;
 		    break;
 		}
 
@@ -2811,16 +2847,16 @@ plot_boxplot(struct curve_points *plot)
 	    int top = N-1;
 	    int bot = 0;
 	    while ((double)(top-bot+1)/(double)(N) >= boxplot_opts.limit_value) {
-		whisker_top = plot->points[top].y;
-		whisker_bot = plot->points[bot].y;
+		whisker_top = subset_points[top].y;
+		whisker_bot = subset_points[bot].y;
 		if (whisker_top - median >= median - whisker_bot) {
 		    top--;
-		    while ((top > 0) && (plot->points[top].y == plot->points[top-1].y))
+		    while ((top > 0) && (subset_points[top].y == subset_points[top-1].y))
 			top--;
 		}
 		if (whisker_top - median <= median - whisker_bot) {
 		    bot++;
-		    while ((bot < top) && (plot->points[bot].y == plot->points[bot+1].y))
+		    while ((bot < top) && (subset_points[bot].y == subset_points[bot+1].y))
 			bot++;
 		}
 	    }
@@ -2829,59 +2865,63 @@ plot_boxplot(struct curve_points *plot)
 	/* Dummy up a single-point candlesticks plot using these limiting values */
 	candle.type = INRANGE;
 	if (plot->plot_type == FUNC)
-	    candle.x = (plot->points[0].x + plot->points[N-1].x) / 2.;
+	    candle.x = (subset_points[0].x + subset_points[N-1].x) / 2.;
 	else
-	    candle.x = plot->points->x + boxplot_opts.separation * level;
+	    candle.x = subset_points->x + boxplot_opts.separation * level;
 	candle.y = quartile1;
 	candle.z = quartile3;
 	candle.ylow  = whisker_bot;
 	candle.yhigh = whisker_top;
-	candle.xlow  = plot->points->xlow + boxplot_opts.separation * level;
+	candle.xlow  = subset_points->xlow + boxplot_opts.separation * level;
 	candle.xhigh = median;	/* Crazy order of candlestick parameters! */
 	plot->points = &candle;
 	plot->p_count = 1;
+
+	/* for boxplots "lc variable" means color by factor index */ 
+	if (plot->varcolor)
+	    plot->varcolor[0] = plot->base_linetype + level + 1;
 
 	if (boxplot_opts.plotstyle == FINANCEBARS)
 	    plot_f_bars( plot );
 	else
 	    plot_c_bars( plot );
 
-	plot->points = save_points;
-	plot->p_count = N;
-
 	/* Now draw individual points for the outliers */
 	outliers:
 	if (boxplot_opts.outliers) {
 	    int i,j,x,y;
-	    p_width = plot->lp_properties.p_size * term->h_tic;
+	    int p_width = term->h_tic * plot->lp_properties.p_size;
+	    int p_height = term->v_tic * plot->lp_properties.p_size;
 
-	    for (i = 0; i < plot->p_count; i++) {
+	    for (i = 0; i < subset_count; i++) {
 
-		if (plot->points[i].y >= candle.ylow
-		&&  plot->points[i].y <= candle.yhigh)
+		if (subset_points[i].y >= candle.ylow
+		&&  subset_points[i].y <= candle.yhigh)
 		    continue;
 
-		if (plot->points[i].type != INRANGE)
+		if (subset_points[i].type == UNDEFINED)
 		    continue;
 
 		x = map_x(candle.x);
-		y = map_y(plot->points[i].y);
-		/* do clipping if necessary */
-		if (clip_points &&
-		    (x < plot_bounds.xleft + p_width
+		y = map_y(subset_points[i].y);
+
+		/* previously calculated INRANGE/OUTRANGE is not correct, so clip here */
+		if (   x < plot_bounds.xleft + p_width
 		    || y < plot_bounds.ybot + p_height
 		    || x > plot_bounds.xright - p_width
-		    || y > plot_bounds.ytop - p_height)) {
+		    || y > plot_bounds.ytop - p_height)
 			continue;
-		}
 
 		/* Separate any duplicate outliers */
-		for (j=1; (i >= j) && (plot->points[i].y == plot->points[i-j].y); j++)
+		for (j=1; (i >= j) && (subset_points[i].y == subset_points[i-j].y); j++)
 		    x += p_width * ((j & 1) == 0 ? -j : j);;
 
 		(term->point) (x, y, plot->lp_properties.p_type);
 	    }
 	}
+
+    /* Restore original dataset points and size */
+    plot->points = save_points;
     plot->p_count = saved_p_count;
     }
 }
@@ -3276,7 +3316,7 @@ xtick2d_callback(
     if (grid.l_type > LT_NODRAW) {
 	(t->layer)(TERM_LAYER_BEGIN_GRID);
 	term_apply_lp_properties(&grid);
-	if (polar_grid_angle) {
+	if (polar_grid_angle > 0) {
 	    double x = place, y = 0, s = sin(0.1), c = cos(0.1);
 	    int i;
 	    int ogx = map_x(x);
@@ -3388,7 +3428,7 @@ ytick2d_callback(
     if (grid.l_type > LT_NODRAW) {
 	(t->layer)(TERM_LAYER_BEGIN_GRID);
 	term_apply_lp_properties(&grid);
-	if (polar_grid_angle) {
+	if (polar_grid_angle > 0) {
 	    double x = 0, y = place, s = sin(0.1), c = cos(0.1);
 	    int i;
 	    if (place > largest_polar_circle)
@@ -3484,9 +3524,12 @@ map_position_double(
 	}
     case second_axes:
 	{
-	    if (axis_array[SECOND_X_AXIS].linked_to_primary)
+	    if (axis_array[SECOND_X_AXIS].linked_to_primary) {
+		AXIS_INDEX save = x_axis;
+		x_axis = SECOND_X_AXIS;
 		*x = (double)map_x(pos->x);
-	    else {
+		x_axis = save;
+	    } else {
 		double xx = axis_log_value_checked(SECOND_X_AXIS, pos->x, what);
 		*x = AXIS_MAP(SECOND_X_AXIS, xx);
 	    }
@@ -3519,9 +3562,12 @@ map_position_double(
 	}
     case second_axes:
 	{
-	    if (axis_array[SECOND_Y_AXIS].linked_to_primary)
-		*y = (double)map_x(pos->y);
-	    else {
+	    if (axis_array[SECOND_Y_AXIS].linked_to_primary) {
+		AXIS_INDEX save = y_axis;
+		y_axis = SECOND_Y_AXIS;
+		*y = (double)map_y(pos->y);
+		y_axis = save;
+	    } else {
 		double yy = axis_log_value_checked(SECOND_Y_AXIS, pos->y, what);
 		*y = AXIS_MAP(SECOND_Y_AXIS, yy);
 	    }
@@ -3558,6 +3604,11 @@ map_position_r(
     double *x, double *y,
     const char *what)
 {
+    /* Catches the case of "first" or "second" coords on a log-scaled axis */
+    if (pos->x == 0)
+	*x = 0;
+    else
+
     switch (pos->scalex) {
     case first_axes:
 	{
@@ -3593,6 +3644,11 @@ map_position_r(
     /* Maybe they only want one coordinate translated? */
     if (y == NULL)
 	return;
+
+    /* Catches the case of "first" or "second" coords on a log-scaled axis */
+    if (pos->y == 0)
+	*y = 0;
+    else
 
     switch (pos->scaley) {
     case first_axes:
@@ -3633,6 +3689,7 @@ plot_border()
 {
     int min, max;
 
+	(*term->layer) (TERM_LAYER_BEGIN_BORDER);
 	term_apply_lp_properties(&border_lp);	/* border linetype */
 	if (border_complete)
 	    newpath();
@@ -3688,6 +3745,7 @@ plot_border()
 
 	if (border_complete)
 	    closepath();
+	(*term->layer) (TERM_LAYER_END_BORDER);
 }
 
 
@@ -3836,6 +3894,10 @@ attach_title_to_plot(struct curve_points *this_plot, legend_key *key)
     struct termentry *t = term;
     int index, x, y;
 
+    if (this_plot->plot_type == NODATA)
+	return;
+
+    /* beginning or end of plot trace */
     if (this_plot->title_position > 0) {
 	for (index=this_plot->p_count-1; index > 0; index--)
 	    if (this_plot->points[index].type == INRANGE)
@@ -3845,6 +3907,8 @@ attach_title_to_plot(struct curve_points *this_plot, legend_key *key)
 	    if (this_plot->points[index].type == INRANGE)
 		break;
     }
+    if (this_plot->points[index].type != INRANGE)
+	return;
     x = map_x(this_plot->points[index].x);
     y = map_y(this_plot->points[index].y);
 
@@ -4158,18 +4222,6 @@ check_for_variable_color(struct curve_points *plot, double *colorvalue)
  */
 #include "util3d.h"
 
-/* hyperplane_between_points:
- * Compute the hyperplane representation of a line passing
- *  between two points.
- */
-static void
-hyperplane_between_points(double *p1, double *p2, double *w, double *b)
-{
-    w[0] = p1[1] - p2[1];
-    w[1] = p2[0] - p1[0];
-    *b = -(w[0]*p1[0] + w[1]*p1[1]);
-}
-
 /* plot_image_or_update_axes:
  * Plot the coordinates similar to the points option except use
  *  pixels.  Check if the data forms a valid image array, i.e.,
@@ -4188,9 +4240,9 @@ plot_image_or_update_axes(void *plot, TBOOLEAN update_axes)
     struct coordinate GPHUGE *points;
     int p_count;
     int i;
-    double w_hyp[2], b_hyp;                    /* Hyperlane vector and constant */
     double p_start_corner[2], p_end_corner[2]; /* Points used for computing hyperplane. */
     int K = 0, L = 0;                          /* Dimensions of image grid. K = <scan line length>, L = <number of scan lines>. */
+    unsigned int ncols, nrows;		        /* EAM DEBUG - intended to replace K and L above */
     double p_mid_corner[2];                    /* Point representing first corner found, i.e. p(K-1) */
     double delta_x_grid[2] = {0, 0};           /* Spacings between points, two non-orthogonal directions. */
     double delta_y_grid[2] = {0, 0};
@@ -4199,7 +4251,10 @@ plot_image_or_update_axes(void *plot, TBOOLEAN update_axes)
     double view_port_y[2];
     double view_port_z[2] = {0,0};
     t_imagecolor pixel_planes;
+
+    /* Detours necessary to handle 3D plots */
     TBOOLEAN project_points = FALSE;		/* True if 3D plot */
+    int image_x_axis, image_y_axis, image_z_axis;
 
     if ((((struct surface_points *)plot)->plot_type == DATA3D)
     ||  (((struct surface_points *)plot)->plot_type == FUNC3D))
@@ -4209,10 +4264,20 @@ plot_image_or_update_axes(void *plot, TBOOLEAN update_axes)
 	points = ((struct surface_points *)plot)->iso_crvs->points;
 	p_count = ((struct surface_points *)plot)->iso_crvs->p_count;
 	pixel_planes = ((struct surface_points *)plot)->image_properties.type;
+	ncols = ((struct surface_points *)plot)->image_properties.ncols;
+	nrows = ((struct surface_points *)plot)->image_properties.nrows;
+	image_x_axis = FIRST_X_AXIS;
+	image_y_axis = FIRST_Y_AXIS;
+	image_z_axis = FIRST_Z_AXIS;	/* FIXME:  Not sure this is correct */
     } else {
 	points = ((struct curve_points *)plot)->points;
 	p_count = ((struct curve_points *)plot)->p_count;
 	pixel_planes = ((struct curve_points *)plot)->image_properties.type;
+	ncols = ((struct curve_points *)plot)->image_properties.ncols;
+	nrows = ((struct curve_points *)plot)->image_properties.nrows;
+	image_x_axis = ((struct curve_points *)plot)->x_axis;
+	image_y_axis = ((struct curve_points *)plot)->y_axis;
+	image_z_axis = ((struct curve_points *)plot)->z_axis;
     }
 
     if (p_count < 1) {
@@ -4237,15 +4302,10 @@ plot_image_or_update_axes(void *plot, TBOOLEAN update_axes)
      * function for images will be used.  Otherwise, the terminal function for
      * filled polygons are used to construct parallelograms for the pixel elements.
      */
-#define GRIDX(X) AXIS_DE_LOG_VALUE(((struct curve_points *)plot)->x_axis,points[X].x)
-#define GRIDY(Y) AXIS_DE_LOG_VALUE(((struct curve_points *)plot)->y_axis,points[Y].y)
-#define GRIDZ(Z) AXIS_DE_LOG_VALUE(((struct curve_points *)plot)->z_axis,points[Z].z)
+#define GRIDX(X) AXIS_DE_LOG_VALUE(image_x_axis,points[X].x)
+#define GRIDY(Y) AXIS_DE_LOG_VALUE(image_y_axis,points[Y].y)
+#define GRIDZ(Z) AXIS_DE_LOG_VALUE(image_z_axis,points[Z].z)
 
-
-    /* Compute the hyperplane representation of the cross diagonal from
-     * the very first point of the scan to the very last point of the
-     * scan.
-     */
     if (project_points) {
 	map3d_xy_double(points[0].x, points[0].y, points[0].z, &p_start_corner[0], &p_start_corner[1]);
 	map3d_xy_double(points[p_count-1].x, points[p_count-1].y, points[p_count-1].z, &p_end_corner[0], &p_end_corner[1]);
@@ -4263,51 +4323,32 @@ plot_image_or_update_axes(void *plot, TBOOLEAN update_axes)
 	p_end_corner[1] = points[p_count-1].y;
     }
 
-    hyperplane_between_points(p_start_corner, p_end_corner, w_hyp, &b_hyp);
+    /* This is a vestige of older code that calculated K and L on the fly	*/
+    /* rather than keeping track of matrix/array/image dimensions on input	*/
+    K = ncols;
+    L = nrows;
 
-    for (K = p_count, i=1; i < p_count; i++) {
-	double p[2];
-	if (project_points) {
-	    map3d_xy_double(points[i].x, points[i].y, points[i].z, &p[0], &p[1]);
-	} else if (X_AXIS.log || Y_AXIS.log) {
-	    p[0] = GRIDX(i);
-	    p[1] = GRIDY(i);
+    /* FIXME: We don't track the dimensions of image data provided as x/y/value	*/
+    /* with individual coords rather than via array, matrix, or image format.	*/
+    /* This might better be done when the data is entered rather than here.	*/
+    if (L == 0 || K == 0) {
+	if (points[0].x == points[1].x) {
+	    /* y coord varies fastest */
+	    for (K = 0; points[K].x == points[0].x; K++)
+		    if (K >= p_count)
+			    break;
+	    L = p_count / K;
 	} else {
-	    p[0] = points[i].x;
-	    p[1] = points[i].y;
+	    /* x coord varies fastest */
+	    for (K = 0; points[K].y == points[0].y; K++)
+		    if (K >= p_count)
+			    break;
+	    L = p_count / K;
 	}
-	if (i == 1) {
-	    /* Determine what side (sign) of the hyperplane the second point is on.
-	     * If the second point is on the negative side of the plane, change
-	     * the sign of hyperplane variables.  Then any remaining points on the
-	     * first line will test positive in the hyperplane formula.  The first
-	     * point on the second line will test negative.
-	     */
-	    if ((w_hyp[0]*p[0] + w_hyp[1]*p[1] + b_hyp) < 0) {
-		w_hyp[0] = -w_hyp[0];
-		w_hyp[1] = -w_hyp[1];
-		b_hyp = -b_hyp;
-	    }
-	} else {
-	    /* The first point on the opposite side of the hyperplane is the
-	     * candidate for the first point of the second scan line.
-	     */
-	    if ((w_hyp[0]*p[0] + w_hyp[1]*p[1] + b_hyp) < 0) {
-		K = i;
-		break;
-	    }
-	}
+	fprintf(stderr, "No dimension information for %d pixels total. Try %d x %d\n",
+		p_count, L, K);
     }
 
-    if (K == p_count) {
-	int_warn(NO_CARET, "Image grid must be at least 2 x 2.\n\n");
-	/* return; */
-    }
-    L = p_count/K;
-    if (((double)L) != ((double)p_count/K)) {
-	int_warn(NO_CARET, "Number of pixels cannot be factored into integers matching grid. N = %d  K = %d", p_count, K);
-	return;
-    }
     grid_corner[0] = 0;
     grid_corner[1] = K-1;
     grid_corner[3] = p_count - 1;
@@ -4354,10 +4395,10 @@ plot_image_or_update_axes(void *plot, TBOOLEAN update_axes)
 
 	    /* Update range and store value back into itself. */
 	    dummy_type = INRANGE;
-	    STORE_WITH_LOG_AND_UPDATE_RANGE(x, x, dummy_type, ((struct curve_points *)plot)->x_axis,
+	    STORE_WITH_LOG_AND_UPDATE_RANGE(x, x, dummy_type, image_x_axis,
 				((struct curve_points *)plot)->noautoscale, NOOP, x = -VERYLARGE);
 	    dummy_type = INRANGE;
-	    STORE_WITH_LOG_AND_UPDATE_RANGE(y, y, dummy_type, ((struct curve_points *)plot)->y_axis,
+	    STORE_WITH_LOG_AND_UPDATE_RANGE(y, y, dummy_type, image_y_axis,
 				((struct curve_points *)plot)->noautoscale, NOOP, y = -VERYLARGE);
 	}
 	return;
@@ -4539,6 +4580,13 @@ plot_image_or_update_axes(void *plot, TBOOLEAN update_axes)
 			    int_warn(NO_CARET, "Visible pixel grid has a scan line longer than previous scan lines.");
 			    return;
 			}
+		    }
+
+		    /* This can happen if the data supplied for a matrix does not */
+		    /* match the matrix dimensions found when the file was opened */
+		    if (i_sub_image >= array_size) {
+			int_warn(NO_CARET, "image data corruption");
+			break;
 		    }
 
 		    pixel_M_N = i_image;
@@ -4784,7 +4832,8 @@ plot_image_or_update_axes(void *plot, TBOOLEAN update_axes)
 				corners[0].style = FS_TRANSPARENT_SOLID + (alpha<<4);
 			}
 
-			if (rectangular_image && term->fillbox) {
+			if (rectangular_image && term->fillbox
+			&&  !(term->flags & TERM_POLYGON_PIXELS)) {
 			    /* Some terminals (canvas) can do filled rectangles */
 			    /* more efficiently than filled polygons. */
 			    (*term->fillbox)( corners[0].style,

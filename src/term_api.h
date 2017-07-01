@@ -1,5 +1,5 @@
 /*
- * $Id: term_api.h,v 1.134.2.6 2015/04/04 19:16:33 broeker Exp $
+ * $Id: term_api.h,v 1.134.2.10 2016/07/21 19:00:31 sfeam Exp $
  */
 
 /* GNUPLOT - term_api.h */
@@ -185,6 +185,8 @@ typedef enum termlayer {
 	TERM_LAYER_RESET,
 	TERM_LAYER_BACKTEXT,
 	TERM_LAYER_FRONTTEXT,
+	TERM_LAYER_BEGIN_BORDER,
+	TERM_LAYER_END_BORDER,
 	TERM_LAYER_BEGIN_GRID,
 	TERM_LAYER_END_GRID,
 	TERM_LAYER_END_TEXT,
@@ -235,11 +237,6 @@ typedef enum t_fillstyle { FS_EMPTY, FS_SOLID, FS_PATTERN, FS_DEFAULT,
 /* Color construction for an image, palette lookup or rgb components. */
 typedef enum t_imagecolor { IC_PALETTE, IC_RGB, IC_RGBA }
 	     t_imagecolor;
-/* Holder for various image properties */
-typedef struct t_image {
-    t_imagecolor type; /* See above */
-    TBOOLEAN fallback; /* true == don't use terminal-specific code */
-} t_image;
 
 /* Operations possible with term->modify_plots() */
 #define MODPLOTS_SET_VISIBLE         (1<<0)
@@ -264,6 +261,7 @@ typedef struct t_image {
 #define TERM_IS_LATEX        (1<<13)	/* text uses TeX markup            */
 #define TERM_EXTENDED_COLOR  (1<<14)	/* uses EXTENDED_COLOR_SPECS       */
 #define TERM_NULL_SET_COLOR  (1<<15)	/* no support for RGB color        */
+#define TERM_POLYGON_PIXELS  (1<<16)	/* filledpolygon rather than fillbox */
 
 /* The terminal interface structure --- heart of the terminal layer.
  *
@@ -474,6 +472,7 @@ void term_end_multiplot __PROTO((void));
 void term_reset __PROTO((void));
 void term_apply_lp_properties __PROTO((struct lp_style_type *lp));
 void term_check_multiplot_okay __PROTO((TBOOLEAN));
+void init_monochrome __PROTO((void));
 struct termentry *change_term __PROTO((const char *name, int length));
 
 void write_multiline __PROTO((unsigned int, unsigned int, char *, JUSTIFY, VERT_JUSTIFY, int, const char *));

@@ -41,6 +41,11 @@
  * under either the GPL or the gnuplot license.
 ]*/
 
+#ifdef _WIN32
+# define WIN32_LEAN_AND_MEAN
+# include <windows.h>
+#endif
+
 #include "QtGnuplotWindow.h"
 #include "QtGnuplotWidget.h"
 #include "QtGnuplotEvent.h"
@@ -57,8 +62,12 @@ QtGnuplotWindow::QtGnuplotWindow(int id, QtGnuplotEventHandler* eventHandler, QW
 	m_ctrl = false;
 	m_eventHandler = eventHandler;
 	m_id = id;
-	setAttribute(Qt::WA_DeleteOnClose);
+	m_pid = 0;
 	setWindowIcon(QIcon(":/images/gnuplot"));
+
+//	Setting this attribute causes an error to be reported to the user if a plot
+//	command is received after a plot command is closed.  Is this good or bad?
+//		setAttribute(Qt::WA_DeleteOnClose);
 
 	// Register as the main event receiver if not already created
 	if (m_eventHandler == 0)
@@ -144,7 +153,7 @@ void QtGnuplotWindow::on_keyAction()
 void QtGnuplotWindow::print()
 {
 	QPrinter printer;
-	if (QPrintDialog(&printer).exec() == QDialog::Accepted)
+	if (QPrintDialog(&printer, this).exec() == QDialog::Accepted)
 		m_widget->print(printer);
 }
 
@@ -271,7 +280,14 @@ void QtGnuplotWindow::processEvent(QtGnuplotEventType type, QDataStream& in)
 		setWindowTitle(title);
 	}
 	else if (type == GERaise)
+	{
+#ifdef _WIN32
+		SetForegroundWindow((HWND) winId());
+		if (isMinimized())
+			showNormal();
+#endif
 		raise();
+	}
 	else if (type == GESetCtrl)
 		in >> m_ctrl;
 	else if (type == GESetPosition)
@@ -280,6 +296,8 @@ void QtGnuplotWindow::processEvent(QtGnuplotEventType type, QDataStream& in)
 		in >> pos;
 		move(pos);
 	}
+	else if (type == GEPID)
+		in >> m_pid;
 	else
 		m_widget->processEvent(type, in);
 }
@@ -288,6 +306,16 @@ void QtGnuplotWindow::keyPressEvent(QKeyEvent* event)
 {
 	if ((event->key() == 'Q') && ( !m_ctrl || (QApplication::keyboardModifiers() & Qt::ControlModifier) ))
 		close();
+
+#if !defined(DISABLE_SPACE_RAISES_CONSOLE)
+	if ((event->key() == Qt::Key_Space) && ( !m_ctrl || (QApplication::keyboardModifiers() & Qt::ControlModifier) ))
+	{
+#ifdef _WIN32
+		AllowSetForegroundWindow(m_pid);
+#endif
+		m_eventHandler->postTermEvent(GE_raise, 0, 0, 0, 0, m_widget);
+	}
+#endif
 
 	QMainWindow::keyPressEvent(event);
 }

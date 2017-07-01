@@ -1,6 +1,6 @@
 /*
- *  $Id: lua.trm,v 1.23.2.2 2014/10/29 03:28:24 sfeam Exp $
- *  $Date: 2014/10/29 03:28:24 $
+ *  $Id: lua.trm,v 1.23.2.5 2015/12/30 18:48:01 sfeam Exp $
+ *  $Date: 2015/12/30 18:48:01 $
  *  $Rev: 99 $
  */
 
@@ -251,7 +251,7 @@ LUA_GP_int_error(lua_State *L) {
       msg = luaL_checkstring(L, 1);
       break;
     case 2:
-      t_num = luaL_checkint(L, 1);
+      t_num = luaL_checkinteger(L, 1);
       msg  = luaL_checkstring(L, 2);
       break;
     default:
@@ -285,7 +285,7 @@ LUA_GP_int_warn(lua_State *L) {
       msg = luaL_checkstring(L, 1);
       break;
     case 2:
-      t_num = luaL_checkint(L, 1);
+      t_num = luaL_checkinteger(L, 1);
       msg = luaL_checkstring(L, 2);
       break;
     default:
@@ -328,6 +328,10 @@ LUA_GP_term_out(lua_State *L) {
       do
         c = tos_getch();
       while (c != '\x04' && c != '\r' && c != '\n');
+#elif defined(_WIN32)
+      do
+        c = getchar();
+      while (c != EOF && c != '\n' && c != '\r');
 #else
       do
         c = getchar();
@@ -524,7 +528,7 @@ LUA_get_term_vars(void) {
   lua_pop(L, 1);
   
   lua_getfield(L, luaterm, "flags");
-  term->flags |= (lua_isnumber(L, -1)) ? (int)lua_tointeger(L, -1) : TERM_BINARY;
+  term->flags = (lua_isnumber(L, -1)) ? (int)lua_tointeger(L, -1) : TERM_BINARY;
   lua_pop(L, 1);
 
   lua_getfield(L, luaterm, "tscale");
@@ -867,6 +871,12 @@ LUA_options()
   }
 
   LUA_get_term_vars();
+
+  /* Treat "set term tikz mono" as "set term tikz; set mono" */
+  if (strstr(term_options, "monochrome")) {
+    monochrome = TRUE;
+    init_monochrome();
+ }
 
 }
 

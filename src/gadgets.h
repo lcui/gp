@@ -96,6 +96,7 @@ typedef struct text_label {
  * indicated by tag = -2 */
 #define NONROTATABLE_LABEL_TAG -2
 #define ROTATE_IN_3D_LABEL_TAG -3
+#define VARIABLE_ROTATE_LABEL_TAG -4
 #define EMPTY_LABELSTRUCT \
     {NULL, NONROTATABLE_LABEL_TAG, \
      {character, character, character, 0.0, 0.0, 0.0}, CENTRE, 0, 0, \
@@ -394,11 +395,19 @@ typedef struct {
   int xoffset;	/* To adjust left or right, e.g. for y2tics */
   struct position origin;
   struct position size;
+  TBOOLEAN invert;	/* gradient low->high runs top->bot rather than bot->top */
   BoundingBox bounds;
 } color_box_struct;
 
 extern color_box_struct color_box;
 extern color_box_struct default_color_box;
+
+/* Holder for various image properties */
+typedef struct t_image {
+    t_imagecolor type; /* See above */
+    TBOOLEAN fallback; /* true == don't use terminal-specific code */
+    unsigned int ncols, nrows; /* image dimensions */
+} t_image;
 
 extern BoundingBox plot_bounds;	/* Plot Boundary */
 extern BoundingBox canvas; 	/* Writable area on terminal */
@@ -451,6 +460,7 @@ extern double zero;		/* zero threshold, not 0! */
 
 extern double pointsize;
 extern double pointintervalbox;
+extern t_colorspec background_fill;
 
 #define SOUTH		1 /* 0th bit */
 #define WEST		2 /* 1th bit */

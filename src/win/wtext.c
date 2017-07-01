@@ -1,5 +1,5 @@
 /*
- * $Id: wtext.c,v 1.51 2014/05/09 22:14:12 broeker Exp $
+ * $Id: wtext.c,v 1.51.2.5 2017/03/04 08:20:41 markisch Exp $
  */
 
 /* GNUPLOT - win/wtext.c */
@@ -57,6 +57,7 @@
 #include <windowsx.h>
 #include <commdlg.h>
 #include <commctrl.h>
+#include <tchar.h>
 
 #include "wgnuplib.h"
 #include "winmain.h"
@@ -258,7 +259,7 @@ TextInit(LPTW lptw)
 	SetWindowPos(lptw->hWndText, (HWND)NULL, 0, 0,
 			rect.right, rect.bottom - lptw->StatusHeight,
 			SWP_NOZORDER | SWP_NOACTIVATE);
-	ShowWindow(lptw->hStatusbar, TRUE);
+	ShowWindow(lptw->hStatusbar, SW_SHOW);
     }
 
     lptw->hPopMenu = CreatePopupMenu();
@@ -408,8 +409,8 @@ NewLine(LPTW lptw)
 
     UpdateCaretPos(lptw);
     if (lptw->bFocus && lptw->bGetCh) {
-		UpdateCaretPos(lptw);
-		ShowCaret(lptw->hWndText);
+	UpdateCaretPos(lptw);
+	ShowCaret(lptw->hWndText);
     }
 
     if (lptw->CursorFlag)
@@ -422,6 +423,7 @@ static void
 UpdateScrollBars(LPTW lptw)
 {
     signed int length;  /* this must be signed for this to work! */
+    SCROLLINFO si;
 
     /* horizontal scroll bar */
     length = sb_max_line_length(&(lptw->ScreenBuffer)) + 1;
@@ -429,8 +431,17 @@ UpdateScrollBars(LPTW lptw)
 	/* maximum horizontal scroll position is given by maximum line length */
 	lptw->ScrollMax.x = max(0, lptw->CharSize.x * length - lptw->ClientSize.x);
 	lptw->ScrollPos.x = min(lptw->ScrollPos.x, lptw->ScrollMax.x);
-	SetScrollRange(lptw->hWndText, SB_HORZ, 0, lptw->ScrollMax.x, FALSE);
-	SetScrollPos(lptw->hWndText, SB_HORZ, lptw->ScrollPos.x, TRUE);
+
+	/* update scroll bar page size, range and position */
+	si.cbSize = sizeof(SCROLLINFO);
+	si.fMask = SIF_PAGE | SIF_RANGE | SIF_POS;
+	si.nPage = lptw->ClientSize.x;
+	si.nMin = 0;
+	/* The maximum reported scroll position will be (nMax - (nPage - 1)),
+	   so we need to set nMax to the full range. */
+	si.nMax = lptw->CharSize.x * length;
+	si.nPos = lptw->ScrollPos.x;
+	SetScrollInfo(lptw->hWndText, SB_HORZ, &si, TRUE);
 	ShowScrollBar(lptw->hWndText, SB_HORZ, TRUE);
     } else {
 	lptw->ScrollMax.x = 0;
@@ -443,8 +454,17 @@ UpdateScrollBars(LPTW lptw)
     if (length >= lptw->ScreenSize.y) {
 	lptw->ScrollMax.y = max(0, lptw->CharSize.y * length - lptw->ClientSize.y);
 	lptw->ScrollPos.y = min(lptw->ScrollPos.y, lptw->ScrollMax.y);
-	SetScrollRange(lptw->hWndText, SB_VERT, 0, lptw->ScrollMax.y, FALSE);
-	SetScrollPos(lptw->hWndText, SB_VERT, lptw->ScrollPos.y, TRUE);
+
+	/* update scroll bar page size, range and position */
+	si.cbSize = sizeof(SCROLLINFO);
+	si.fMask = SIF_PAGE | SIF_RANGE | SIF_POS;
+	si.nPage = lptw->ClientSize.y;
+	si.nMin = 0;
+	/* The maximum reported scroll position will be (nMax - (nPage - 1)),
+	   so we need to set nMax to the full range. */
+	si.nMax = lptw->CharSize.y * length;
+	si.nPos = lptw->ScrollPos.y;
+	SetScrollInfo(lptw->hWndText, SB_VERT, &si, TRUE);
 	ShowScrollBar(lptw->hWndText, SB_VERT, TRUE);
     } else {
 	lptw->ScrollMax.y = 0;
@@ -675,6 +695,9 @@ DoLine(LPTW lptw, HDC hdc, int xpos, int ypos, int x, int y, int count)
     char *outp;
     LPLB lb;
 
+    /* silence compiler warning */
+    (void) num;
+
     idx = 0;
     num = count;
     if (y <= sb_length(&(lptw->ScreenBuffer))) {
@@ -702,7 +725,6 @@ DoLine(LPTW lptw, HDC hdc, int xpos, int ypos, int x, int y, int count)
     free(outp);
 #else
     while (num > 0) {
-	num = 0;
 	attr = *pa;
 	while ((num > 0) && (attr == *pa)) {
 	    /* skip over bytes with same attribute */
@@ -722,7 +744,7 @@ DoLine(LPTW lptw, HDC hdc, int xpos, int ypos, int x, int y, int count)
 	free(outp);
 
 	xpos += lptw->CharSize.x * (count - num - idx);
-	idx = count-num;
+	idx = count - num;
     }
 #endif
 }
@@ -960,44 +982,49 @@ TextMakeFont(LPTW lptw)
 
 
 static void
-TextSelectFont(LPTW lptw) {
+TextSelectFont(LPTW lptw)
+{
     LOGFONT lf;
     CHOOSEFONT cf;
     HDC hdc;
-    char lpszStyle[LF_FACESIZE];
-    LPSTR p;
+    LPTSTR p;
 
     /* Set all structure fields to zero. */
-    _fmemset(&cf, 0, sizeof(CHOOSEFONT));
-    _fmemset(&lf, 0, sizeof(LOGFONT));
+    memset(&cf, 0, sizeof(CHOOSEFONT));
+    memset(&lf, 0, sizeof(LOGFONT));
     cf.lStructSize = sizeof(CHOOSEFONT);
     cf.hwndOwner = lptw->hWndParent;
-    _fstrncpy(lf.lfFaceName,lptw->fontname,LF_FACESIZE);
-    if ( (p = _fstrstr(lptw->fontname," Bold")) != (LPSTR)NULL ) {
-	_fstrncpy(lpszStyle,p+1,LF_FACESIZE);
-	lf.lfFaceName[ (unsigned int)(p-lptw->fontname) ] = '\0';
+    _tcsncpy(lf.lfFaceName, lptw->fontname, LF_FACESIZE);
+    if ((p = _tcsstr(lptw->fontname, TEXT(" Bold"))) != NULL) {
+	lf.lfWeight = FW_BOLD;
+	lf.lfFaceName[p - lptw->fontname] = NUL;
+    } else {
+	lf.lfWeight = FW_NORMAL;
     }
-    else if ( (p = _fstrstr(lptw->fontname," Italic")) != (LPSTR)NULL ) {
-	_fstrncpy(lpszStyle,p+1,LF_FACESIZE);
-	lf.lfFaceName[ (unsigned int)(p-lptw->fontname) ] = '\0';
-    } else
-	_fstrcpy(lpszStyle,"Regular");
-    cf.lpszStyle = lpszStyle;
+    if ((p = _tcsstr(lptw->fontname, TEXT(" Italic"))) != NULL) {
+	lf.lfItalic = TRUE;
+	lf.lfFaceName[p - lptw->fontname] = NUL;
+    } else {
+	lf.lfItalic = FALSE;
+    }
+    lf.lfCharSet = DEFAULT_CHARSET;
     hdc = GetDC(lptw->hWndText);
     lf.lfHeight = -MulDiv(lptw->fontsize, GetDeviceCaps(hdc, LOGPIXELSY), 72);
     ReleaseDC(lptw->hWndText, hdc);
     lf.lfPitchAndFamily = FIXED_PITCH;
     cf.lpLogFont = &lf;
     cf.nFontType = SCREEN_FONTTYPE;
-    cf.Flags = CF_SCREENFONTS | CF_FIXEDPITCHONLY | CF_INITTOLOGFONTSTRUCT | CF_USESTYLE;
+    cf.Flags = CF_SCREENFONTS | CF_FIXEDPITCHONLY | CF_INITTOLOGFONTSTRUCT | CF_SCALABLEONLY;
+
     if (ChooseFont(&cf)) {
 	RECT rect;
-	_fstrcpy(lptw->fontname,lf.lfFaceName);
+
+	_tcscpy(lptw->fontname, lf.lfFaceName);
 	lptw->fontsize = cf.iPointSize / 10;
 	if (cf.nFontType & BOLD_FONTTYPE)
-	    lstrcat(lptw->fontname," Bold");
+	    _tcscat(lptw->fontname, TEXT(" Bold"));
 	if (cf.nFontType & ITALIC_FONTTYPE)
-	    lstrcat(lptw->fontname," Italic");
+	    _tcscat(lptw->fontname, TEXT(" Italic"));
 	TextMakeFont(lptw);
 	/* force a window update */
 	GetClientRect(lptw->hWndText, (LPRECT) &rect);
@@ -1435,9 +1462,17 @@ WndTextProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 	if (GetKeyState(VK_CONTROL) < 0) {
 	    switch(wParam) {
 	    case VK_INSERT:
-	    case 'C':
 		/* Ctrl-Insert: copy to clipboard */
 		SendMessage(lptw->hWndText, WM_COMMAND, M_COPY_CLIP, (LPARAM)0);
+		break;
+	    case 'C':
+		/* Ctrl-C: copy to clipboard, if there's selected text,
+		           otherwise indicate the Ctrl-C (break) flag */
+		if ((lptw->MarkBegin.x != lptw->MarkEnd.x) ||
+		    (lptw->MarkBegin.y != lptw->MarkEnd.y))
+		    SendMessage(lptw->hWndText, WM_COMMAND, M_COPY_CLIP, (LPARAM)0);
+		else
+		    ctrlc_flag = TRUE;
 		break;
 	    case 'V':
 		/* Ctrl-V: paste clipboard */
@@ -1916,7 +1951,7 @@ TextGetCh(LPTW lptw)
     int ch;
 
     TextStartEditing(lptw);
-	while (!TextKBHit(lptw)) {
+    while (!TextKBHit(lptw)) {
 	/* CMW: can't use TextMessage here as it does not idle properly */
 	MSG msg;
 	GetMessage(&msg, 0, 0, 0);
@@ -1924,11 +1959,11 @@ TextGetCh(LPTW lptw)
 	DispatchMessage(&msg);
     }
     ch = *lptw->KeyBufOut++;
-    if (ch=='\r')
+    if (ch == '\r')
 	ch = '\n';
     if (lptw->KeyBufOut - lptw->KeyBuf >= lptw->KeyBufSize)
 	lptw->KeyBufOut = lptw->KeyBuf;	/* wrap around */
-	TextStopEditing(lptw);
+    TextStopEditing(lptw);
     return ch;
 }
 
@@ -1949,12 +1984,12 @@ TextGetS(LPTW lptw, LPSTR str, unsigned int size)
 {
     LPSTR next = str;
 
-    while (--size>0) {
-	switch(*next = TextGetChE(lptw)) {
+    while (--size > 0) {
+	switch (*next = TextGetChE(lptw)) {
 	case EOF:
 	    *next = 0;
 	    if (next == str)
-		return (LPSTR) NULL;
+		return NULL;
 	    return str;
 	case '\n':
 	    *(next+1) = 0;
@@ -1977,7 +2012,7 @@ int WDPROC
 TextPutS(LPTW lptw, LPSTR str)
 {
     TextPutStr(lptw, str);
-    return str[_fstrlen(str)-1];
+    return str[strlen(str) - 1];
 }
 
 

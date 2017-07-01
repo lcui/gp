@@ -1,5 +1,5 @@
 #ifndef lint
-static char *RCSid() { return RCSid("$Id: pm3d.c,v 1.104 2014/05/13 18:26:40 sfeam Exp $"); }
+static char *RCSid() { return RCSid("$Id: pm3d.c,v 1.104.2.2 2016/12/15 20:34:25 sfeam Exp $"); }
 #endif
 
 /* GNUPLOT - pm3d.c */
@@ -533,6 +533,7 @@ pm3d_plot(struct surface_points *this_plot, int at_which_z)
     }
 
     if (pm3d.direction == PM3D_DEPTH) {
+	int needed_quadrangles = 0;
 
 	for (scan = 0; scan < this_plot->num_iso_read - 1; scan++) {
 
@@ -541,15 +542,21 @@ pm3d_plot(struct surface_points *this_plot, int at_which_z)
 
 	    are_ftriangles = pm3d.ftriangles && (scanA->p_count != scanB->p_count);
 	    if (!are_ftriangles)
-		allocated_quadrangles += GPMIN(scanA->p_count, scanB->p_count) - 1;
+		needed_quadrangles += GPMIN(scanA->p_count, scanB->p_count) - 1;
 	    else {
-		allocated_quadrangles += GPMAX(scanA->p_count, scanB->p_count) - 1;
+		needed_quadrangles += GPMAX(scanA->p_count, scanB->p_count) - 1;
 	    }
 	}
-	allocated_quadrangles *= (interp_i > 1) ? interp_i : 1;
-	allocated_quadrangles *= (interp_j > 1) ? interp_j : 1;
-	quadrangles = (quadrangle*)gp_realloc(quadrangles, allocated_quadrangles * sizeof (quadrangle), "pm3d_plot->quadrangles");
-	/* DEBUG: fprintf(stderr, "allocated_quadrangles = %d\n", allocated_quadrangles); */
+	needed_quadrangles *= (interp_i > 1) ? interp_i : 1;
+	needed_quadrangles *= (interp_j > 1) ? interp_j : 1;
+
+	while (current_quadrangle + needed_quadrangles >= allocated_quadrangles) {
+	    FPRINTF((stderr, "allocated_quadrangles = %d current = %d needed = %d\n",
+		allocated_quadrangles, current_quadrangle, needed_quadrangles));
+	    allocated_quadrangles = needed_quadrangles + 2*allocated_quadrangles;	
+	    quadrangles = (quadrangle*)gp_realloc(quadrangles, 
+			allocated_quadrangles * sizeof (quadrangle), "pm3d_plot->quadrangles");
+	}
     }
     /* pm3d_rearrange_scan_array(this_plot, (struct iso_curve***)0, (int*)0, &scan_array, &invert); */
 
@@ -1141,6 +1148,7 @@ set_plot_with_palette(int plot_num, int plot_mode)
     struct curve_points *this_2dplot = first_plot;
     int surface = 0;
     struct text_label *this_label = first_label;
+    struct object *this_object;
 
     plot_has_palette = TRUE;
     /* Is pm3d switched on globally? */
@@ -1189,8 +1197,9 @@ set_plot_with_palette(int plot_num, int plot_mode)
 	}
     }
 
-    /* Any label with 'textcolor palette'? */
 #define TC_USES_PALETTE(tctype) (tctype==TC_Z) || (tctype==TC_CB) || (tctype==TC_FRAC)
+
+    /* Any label with 'textcolor palette'? */
     for (; this_label != NULL; this_label = this_label->next) {
 	if (TC_USES_PALETTE(this_label->textcolor.type))
 	    return;
@@ -1204,6 +1213,12 @@ set_plot_with_palette(int plot_num, int plot_mode)
     if (plot_mode == MODE_SPLOT)
 	if (TC_USES_PALETTE(axis_array[FIRST_Z_AXIS].label.textcolor.type)) return;
     if (TC_USES_PALETTE(axis_array[COLOR_AXIS].label.textcolor.type)) return;
+
+    for (this_object = first_object; this_object != NULL; this_object = this_object->next) {
+	if (TC_USES_PALETTE(this_object->lp_properties.pm3d_color.type))
+	    return;
+    }
+    
 #undef TC_USES_PALETTE
 
     /* Palette with continuous colors is not used. */

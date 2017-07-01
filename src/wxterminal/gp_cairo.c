@@ -1,5 +1,5 @@
 /*
- * $Id: gp_cairo.c,v 1.87.2.4 2015/03/24 21:34:59 sfeam Exp $
+ * $Id: gp_cairo.c,v 1.87.2.9 2016/07/08 20:48:34 sfeam Exp $
  */
 
 /* GNUPLOT - gp_cairo.c */
@@ -345,13 +345,12 @@ void gp_cairo_set_linewidth(plot_struct *plot, double linewidth)
 	/* draw any open polygon set */
 	gp_cairo_end_polygon(plot);
 
-	if (linewidth < 0.25)	/* Admittedly arbitrary */
-	    linewidth = 0.25;
-	plot->linewidth = linewidth;
-
 	if (!strcmp(term->name,"pdfcairo"))
-		plot->linewidth *= 2;
+	    linewidth *= 2;
+	if (linewidth < 0.20)	/* Admittedly arbitrary */
+	    linewidth = 0.20;
 
+	plot->linewidth = linewidth;
 }
 
 
@@ -549,8 +548,6 @@ void gp_cairo_set_dashtype(plot_struct *plot, int type, t_dashtype *custom_dash_
 	};
 	int lt = (type) % 5;
 
-	FPRINTF((stderr,"set_dashtype %d\n", type));
-
 	if (type == DASHTYPE_CUSTOM && custom_dash_type) {
 		/* Convert to internal representation */
 		int i;
@@ -568,13 +565,7 @@ void gp_cairo_set_dashtype(plot_struct *plot, int type, t_dashtype *custom_dash_
 			plot->current_dashpattern[i] = custom_dash_type->pattern[i]
 				* plot->dashlength
 				* plot->oversampling_scale * empirical_scale;
-		FPRINTF((stderr,"gp_cairo_set_dashtype: custom pattern\n"));
-		FPRINTF((stderr,"	%f %f %f %f %f %f %f %f\n",
-			plot->current_dashpattern[0], plot->current_dashpattern[1],
-			plot->current_dashpattern[2], plot->current_dashpattern[3],
-			plot->current_dashpattern[4], plot->current_dashpattern[5],
-			plot->current_dashpattern[6], plot->current_dashpattern[7]));
-		plot->linestyle = GP_CAIRO_DASH;
+		gp_cairo_set_linestyle(plot, GP_CAIRO_DASH);
 
 	} else if (type > 0 && lt != 0) {
 		/* Use old (version 4) set of linetype patterns */
@@ -588,13 +579,12 @@ void gp_cairo_set_dashtype(plot_struct *plot, int type, t_dashtype *custom_dash_
 				* plot->dashlength
 				* plot->oversampling_scale
 				* empirical_scale;
-		plot->linestyle = GP_CAIRO_DASH;
+		gp_cairo_set_linestyle(plot, GP_CAIRO_DASH);
 
 	} else {
 		/* Every 5th pattern in the old set is solid */
-		plot->linestyle = GP_CAIRO_SOLID;
+		gp_cairo_set_linestyle(plot, GP_CAIRO_SOLID);
 	}
-
 }
 
 void gp_cairo_stroke(plot_struct *plot)
@@ -613,10 +603,10 @@ void gp_cairo_stroke(plot_struct *plot)
 
 	cairo_save(plot->cr);
 
-	if (plot->linetype == LT_NODRAW)
+	if (plot->linetype == LT_NODRAW) {
 		cairo_set_operator(plot->cr, CAIRO_OPERATOR_XOR);
 
-	else if (lt == LT_AXIS || plot->linestyle == GP_CAIRO_DOTS) {
+	} else if (lt == LT_AXIS || plot->linestyle == GP_CAIRO_DOTS) {
 		/* Grid lines (lt 0) */
 		double dashes[2];
 		double empirical_scale = 1.0;
@@ -827,6 +817,7 @@ void gp_cairo_draw_text(plot_struct *plot, int x1, int y1, const char* string,
 #ifdef MAP_SYMBOL
 	TBOOLEAN symbol_font_parsed = FALSE;
 #endif /*MAP_SYMBOL*/
+	int baseline_offset;
 
 
 	/* begin by stroking any open path */
@@ -882,9 +873,10 @@ void gp_cairo_draw_text(plot_struct *plot, int x1, int y1, const char* string,
 	/* EAM Dec 2012 - The problem is that avg_vchar is not kept in sync with the	*/
 	/* font size.  It is changed when the set_font command is received, not when	*/
 	/* it is executed in the display list. Try basing off plot->fontsize instead. 	*/
-	/* vert_just = ((double)ink_rect.height/2 +(double)ink_rect.y) / PANGO_SCALE;	*/
-	/* vert_just = avg_vchar/2;							*/
-	vert_just = 0.8 * (float)(plot->fontsize * plot->oversampling_scale);
+
+	baseline_offset = pango_layout_get_baseline(layout) / PANGO_SCALE;
+	vert_just = 0.5 * (float)(plot->fontsize * plot->oversampling_scale);
+	vert_just = baseline_offset - vert_just;
 
 	x = (double) x1;
 	y = (double) y1;
@@ -1276,7 +1268,7 @@ void gp_cairo_enhanced_flush(plot_struct *plot)
 		return;
 
 	FPRINTF((stderr, "enhanced flush str=\"%s\" font=%s op=%d sf=%d wf=%d base=%f os=%d wt=%d sl=%d\n",
-		enhanced_text,
+		gp_cairo_enhanced_string,
 		gp_cairo_enhanced_font,
 		gp_cairo_enhanced_overprint,
 		gp_cairo_enhanced_showflag,
@@ -1571,6 +1563,7 @@ void gp_cairo_enhanced_finish(plot_struct *plot, int x, int y)
 	PangoRectangle ink_rect, logical_rect;
 	PangoLayout *layout;
 	double vert_just, arg, enh_x, enh_y, delta, deltax, deltay;
+	int baseline_offset;
 
 	/* Create a PangoLayout, set the font and text */
 	layout = gp_cairo_create_layout (plot->cr);
@@ -1580,10 +1573,12 @@ void gp_cairo_enhanced_finish(plot_struct *plot, int x, int y)
 	pango_layout_set_attributes (layout, gp_cairo_enhanced_AttrList);
 
 	pango_layout_get_extents(layout, &ink_rect, &logical_rect);
-	
-	/* NB: See explanatory comments in gp_cairo_draw_text() */
-	vert_just = 0.8 * (float)(plot->fontsize * plot->oversampling_scale);
 
+	/* NB: See explanatory comments in gp_cairo_draw_text() */
+	baseline_offset = pango_layout_get_baseline(layout) / PANGO_SCALE;
+	vert_just = 0.5 * (float)(plot->fontsize * plot->oversampling_scale);
+	vert_just = baseline_offset - vert_just;
+	
 	arg = plot->text_angle * M_PI/180;
 	enh_x = x - vert_just * sin(arg);
 	enh_y = y - vert_just * cos(arg);
@@ -1725,8 +1720,8 @@ void gp_cairo_boxed_text(plot_struct *plot, int x, int y, int option)
 		gp_cairo_end_polygon(plot);
 
 		cairo_save(plot->cr);
-		dx = 0.5 * bounding_xmargin * (float)(plot->fontsize * plot->oversampling_scale);
-		dy = 0.5 * bounding_ymargin * (float)(plot->fontsize * plot->oversampling_scale);
+		dx = 0.25 * bounding_xmargin * (float)(plot->fontsize * plot->oversampling_scale);
+		dy = 0.25 * bounding_ymargin * (float)(plot->fontsize * plot->oversampling_scale);
 		if (option == TEXTBOX_GREY)
 		    dy = 0;
 		gp_cairo_move(plot,   bounding_box[0]-dx, bounding_box[1]-dy); 
@@ -1743,7 +1738,7 @@ void gp_cairo_boxed_text(plot_struct *plot, int x, int y, int option)
 		    cairo_set_source_rgba(plot->cr, 0.75, 0.75, 0.75, 0.50);
 		    cairo_fill(plot->cr);
 		} else {
-		    cairo_set_line_width(plot->cr, 1.0*plot->oversampling_scale);
+		    cairo_set_line_width(plot->cr, 0.5*plot->oversampling_scale);
 		    cairo_set_source_rgb(plot->cr,
 			plot->color.r, plot->color.g, plot->color.b);
 		    cairo_stroke(plot->cr);

@@ -1,5 +1,5 @@
 #ifndef lint
-static char *RCSid() { return RCSid("$Id: plot3d.c,v 1.231.2.1 2014/09/05 21:50:57 sfeam Exp $"); }
+static char *RCSid() { return RCSid("$Id: plot3d.c,v 1.231.2.9 2016/12/04 00:29:01 sfeam Exp $"); }
 #endif
 
 /* GNUPLOT - plot3d.c */
@@ -748,10 +748,13 @@ get_3ddata(struct surface_points *this_plot)
     int xdatum = 0;
     int ydatum = 0;
     int j;
-    double v[MAXDATACOLS];
     int pt_in_iso_crv = 0;
     struct iso_curve *this_iso;
     int retval = 0;
+    double v[MAXDATACOLS];
+
+    /* Initialize the space that will hold input data values */
+    memset(v, 0, sizeof(v));
 
     if (mapping3d == MAP3D_CARTESIAN) {
 	/* do this check only, if we have PM3D / PM3D-COLUMN not compiled in */
@@ -794,7 +797,7 @@ get_3ddata(struct surface_points *this_plot)
 	/*{{{  read surface from text file */
 	struct iso_curve *local_this_iso = iso_alloc(samples_1);
 	struct coordinate GPHUGE *cp;
-	struct coordinate GPHUGE *cptail = NULL; /* Only for VECTOR plots */
+	struct coordinate GPHUGE *cphead = NULL; /* Only for VECTOR plots */
 	double x, y, z;
 	double xtail, ytail, ztail;
 	double color = VERYLARGE;
@@ -899,7 +902,7 @@ get_3ddata(struct surface_points *this_plot)
 		    cp->type = UNDEFINED;
 		    continue;
 		}
-		cptail = local_this_iso->next->points + xdatum;
+		cphead = local_this_iso->next->points + xdatum;
 	    }
 
 	    if (j == DF_UNDEFINED || j == DF_MISSING) {
@@ -1069,9 +1072,9 @@ get_3ddata(struct surface_points *this_plot)
 	    STORE_WITH_LOG_AND_UPDATE_RANGE(cp->x, x, cp->type, x_axis, this_plot->noautoscale, NOOP, goto come_here_if_undefined);
 	    STORE_WITH_LOG_AND_UPDATE_RANGE(cp->y, y, cp->type, y_axis, this_plot->noautoscale, NOOP, goto come_here_if_undefined);
 	    if (this_plot->plot_style == VECTOR) {
-		cptail->type = INRANGE;
-		STORE_WITH_LOG_AND_UPDATE_RANGE(cptail->x, xtail, cp->type, x_axis, this_plot->noautoscale, NOOP, goto come_here_if_undefined);
-		STORE_WITH_LOG_AND_UPDATE_RANGE(cptail->y, ytail, cp->type, y_axis, this_plot->noautoscale, NOOP, goto come_here_if_undefined);
+		cphead->type = INRANGE;
+		STORE_WITH_LOG_AND_UPDATE_RANGE(cphead->x, xtail, cphead->type, x_axis, this_plot->noautoscale, NOOP, goto come_here_if_undefined);
+		STORE_WITH_LOG_AND_UPDATE_RANGE(cphead->y, ytail, cphead->type, y_axis, this_plot->noautoscale, NOOP, goto come_here_if_undefined);
 	    }
 
 	    if (dgrid3d) {
@@ -1081,7 +1084,7 @@ get_3ddata(struct surface_points *this_plot)
 		 * created created grid more easily. */
 		cp->z = z;
 		if (this_plot->plot_style == VECTOR)
-		    cptail->z = ztail;
+		    cphead->z = ztail;
 	    } else {
 
 		/* EAM Sep 2008 - Otherwise z=Nan or z=Inf or DF_MISSING fails	*/
@@ -1096,7 +1099,7 @@ get_3ddata(struct surface_points *this_plot)
 				cp->z=0;goto come_here_if_undefined);
 
 		if (this_plot->plot_style == VECTOR)
-		    STORE_WITH_LOG_AND_UPDATE_RANGE(cptail->z, ztail, cp->type, z_axis, this_plot->noautoscale, NOOP, goto come_here_if_undefined);
+		    STORE_WITH_LOG_AND_UPDATE_RANGE(cphead->z, ztail, cphead->type, z_axis, this_plot->noautoscale, NOOP, goto come_here_if_undefined);
 
 		if (this_plot->lp_properties.l_type == LT_COLORFROMCOLUMN)
 		    cp->CRD_COLOR = color;
@@ -1104,6 +1107,8 @@ get_3ddata(struct surface_points *this_plot)
 		if (NEED_PALETTE(this_plot)) {
 		    if (pm3d_color_from_column) {
 			COLOR_STORE_WITH_LOG_AND_UPDATE_RANGE(cp->CRD_COLOR, color, cp->type, COLOR_AXIS, this_plot->noautoscale, NOOP, goto come_here_if_undefined);
+			if (this_plot->plot_style == VECTOR)
+			    cphead->CRD_COLOR = color;
 		    } else {
 			COLOR_STORE_WITH_LOG_AND_UPDATE_RANGE(cp->CRD_COLOR, z, cp->type, COLOR_AXIS, this_plot->noautoscale, NOOP, goto come_here_if_undefined);
 		    }
@@ -1295,6 +1300,7 @@ eval_3dplots()
     int i;
     struct surface_points **tp_3d_ptr;
     int start_token=0, end_token;
+    TBOOLEAN eof_during_iteration = FALSE;  /* set when for [n=start:*] hits NODATA */
     int begin_token;
     TBOOLEAN some_data_files = FALSE, some_functions = FALSE;
     TBOOLEAN was_definition = FALSE;
@@ -1353,10 +1359,10 @@ eval_3dplots()
 
 	if (is_definition(c_token)) {
 	    define();
-	    if (!equals(c_token,",")) {
-		was_definition = TRUE;
-		continue;
-	    }
+	    if (equals(c_token, ","))
+		c_token++;
+	    was_definition = TRUE;
+	    continue;
 
 	} else {
 	    int specs = -1;
@@ -1413,6 +1419,7 @@ eval_3dplots()
 
 		this_plot->plot_type = DATA3D;
 		this_plot->plot_style = data_style;
+		eof_during_iteration = FALSE;
 
 		df_set_plot_mode(MODE_SPLOT);
 		specs = df_open(name_str, MAXDATACOLS, (struct curve_points *)this_plot);
@@ -1577,8 +1584,15 @@ eval_3dplots()
 			this_plot->plot_style = POINTSTYLE;
 			this_plot->plot_type = NODATA;
 		    }
-		    if (this_plot->plot_style == TABLESTYLE)
-			int_error(NO_CARET, "use `plot with table` rather than `splot with table`"); 
+
+		    if (this_plot->plot_style == IMAGE
+		    ||  this_plot->plot_style == RGBA_IMAGE
+		    ||  this_plot->plot_style == RGBIMAGE) {
+			if (this_plot->plot_type == FUNC3D)
+			    int_error(c_token-1, "a function cannot be plotted as an image");
+			else
+			    get_image_options(&this_plot->image_properties);
+		    }
 
 		    if ((this_plot->plot_style | data_style) & PM3DSURFACE) {
 			if (equals(c_token, "at")) {
@@ -1589,10 +1603,8 @@ eval_3dplots()
 			}
 		    }
 
-		    if (this_plot->plot_style == IMAGE
-		    ||  this_plot->plot_style == RGBA_IMAGE
-		    ||  this_plot->plot_style == RGBIMAGE)
-			get_image_options(&this_plot->image_properties);
+		    if (this_plot->plot_style == TABLESTYLE)
+			int_error(NO_CARET, "use `plot with table` rather than `splot with table`"); 
 
 		    set_with = TRUE;
 		    continue;
@@ -1922,6 +1934,12 @@ eval_3dplots()
 
 	    if (empty_iteration(plot_iterator))
 		this_plot->plot_type = NODATA;
+	    if (forever_iteration(plot_iterator) && (this_plot->plot_type == NODATA)) {
+		eof_during_iteration = TRUE;
+	    }
+	    if (forever_iteration(plot_iterator) && (this_plot->plot_type == FUNC3D)) {
+		int_error(NO_CARET, "unbounded iteration in function plot");
+	    }
 
 	}			/* !is_definition() : end of scope of this_plot */
 
@@ -1934,7 +1952,9 @@ eval_3dplots()
 	}
 
 	/* Iterate-over-plot mechanisms */
-	if (next_iteration(plot_iterator)) {
+	if (eof_during_iteration) {
+	    /* Nothing to do */ ;
+	} else if (next_iteration(plot_iterator)) {
 	    c_token = start_token;
 	    continue;
 	}
@@ -2040,10 +2060,10 @@ eval_3dplots()
 
 	    if (is_definition(c_token)) {
 		define();
-		if (!equals(c_token,",")) {
-		    was_definition = TRUE;
-		    continue;
-		}
+		if (equals(c_token,","))
+		    c_token++;
+		was_definition = TRUE;
+		continue;
 
 	    } else {
 		struct at_type *at_ptr;

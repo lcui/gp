@@ -1,5 +1,5 @@
 #ifndef lint
-static char *RCSid() { return RCSid("$Id: show.c,v 1.326.2.10 2015/03/29 18:08:05 sfeam Exp $"); }
+static char *RCSid() { return RCSid("$Id: show.c,v 1.326.2.20 2017/02/25 05:20:33 sfeam Exp $"); }
 #endif
 
 /* GNUPLOT - show.c */
@@ -159,6 +159,8 @@ static void show_loadpath __PROTO((void));
 static void show_fontpath __PROTO((void));
 static void show_zero __PROTO((void));
 static void show_datafile __PROTO((void));
+static void show_micro __PROTO((void));
+static void show_minus_sign __PROTO((void));
 #ifdef USE_MOUSE
 static void show_mouse __PROTO((void));
 #endif
@@ -310,6 +312,7 @@ show_command()
 	show_linetype(first_perm_linestyle, tag);
 	break;
     case S_MONOCHROME:
+	fprintf(stderr,"monochrome mode is %s\n", monochrome ? "active" : "not active");
 	if (equals(c_token,"lt") || almost_equals(c_token,"linet$ype")) {
 	    c_token++;
 	    CHECK_TAG_GT_ZERO;
@@ -328,6 +331,12 @@ show_command()
 	break;
     case S_LOGSCALE:
 	show_logscale();
+	break;
+    case S_MICRO:
+	show_micro();
+	break;
+    case S_MINUS_SIGN:
+	show_minus_sign();
 	break;
     case S_OFFSETS:
 	show_offsets();
@@ -748,6 +757,8 @@ show_all()
     show_logscale();
     show_offsets();
     show_margin();
+    show_micro();
+    show_minus_sign();
     show_output();
     show_print();
     show_parametric();
@@ -1857,8 +1868,9 @@ show_key()
     SHOW_ALL_NL;
 
     if (!(key->visible)) {
-	fputs("\
-\tkey is OFF\n", stderr);
+	fputs("\tkey is OFF\n", stderr);
+	if (key->auto_titles == COLUMNHEAD_KEYTITLES)
+	    fputs("\ttreatment of first record as column headers remains in effect\n", stderr);
 	return;
     }
 
@@ -2450,8 +2462,11 @@ show_colorbox()
 	default: /* should *never* happen */
 	    int_error(NO_CARET, "Argh!");
     }
-    fprintf(stderr,"\tcolor gradient is %s in the color box\n",
-	color_box.rotation == 'v' ? "VERTICAL" : "HORIZONTAL");
+    if (color_box.rotation == 'v')
+	fprintf(stderr,"\tcolor gradient is vertical %s\n",
+	color_box.invert ? " (inverted)" : "");
+    else
+	fprintf(stderr,"\tcolor gradient is horizontal\n");
 }
 
 
@@ -2560,6 +2575,28 @@ show_decimalsign()
         fprintf(stderr, "\tdecimalsign for output has default value (normally '.')\n");
 
     fprintf(stderr, "\tdegree sign for output is %s \n", degree_sign);
+}
+
+/* process 'show micro' command */
+static void
+show_micro()
+{
+    SHOW_ALL_NL;
+
+    fprintf(stderr, "\tmicro character for output is %s \n", 
+    	(use_micro && micro) ? micro : "u");
+}
+
+/* process 'show minus_sign' command */
+static void
+show_minus_sign()
+{
+    SHOW_ALL_NL;
+
+    if (use_minus_sign && minus_sign)
+        fprintf(stderr, "\tminus sign for output is %s \n", minus_sign);
+    else
+        fprintf(stderr, "\tno special minus sign\n");
 }
 
 
@@ -2836,8 +2873,7 @@ show_tics(
     else
 	fprintf(stderr, "\txyplane ticslevel is %g\n", xyplane.z);
 
-    if (grid_layer >= 0)
-        fprintf(stderr, "tics are in %s of plot\n", (grid_layer==0) ? "back" : "front");
+    fprintf(stderr, "\ttics are in %s of plot\n", (grid_tics_in_front) ? "front" : "back");
 
     if (showx)
 	show_ticdef(FIRST_X_AXIS);
@@ -3041,6 +3077,8 @@ show_datafile()
     if (END_OF_COMMAND || almost_equals(c_token,"miss$ing")) {
 	if (missing_val == NULL)
 	    fputs("\tNo missing data string set for datafile\n", stderr);
+	else if (!strcmp(missing_val,"NaN"))
+	    fprintf(stderr,"\tall NaN (not-a-number) values will be treated as missing data\n");
 	else
 	    fprintf(stderr, "\t\"%s\" in datafile is interpreted as missing value\n",
 		missing_val);
@@ -3212,6 +3250,7 @@ show_linetype(struct linestyle_def *listhead, int tag)
 {
     struct linestyle_def *this_linestyle;
     TBOOLEAN showed = FALSE;
+    int recycle_count = 0;
 
     for (this_linestyle = listhead; this_linestyle != NULL;
 	 this_linestyle = this_linestyle->next) {
@@ -3225,9 +3264,14 @@ show_linetype(struct linestyle_def *listhead, int tag)
     if (tag > 0 && !showed)
 	int_error(c_token, "linetype not found");
 
-    if (tag == 0 && linetype_recycle_count != 0 && listhead == first_perm_linestyle)
+    if (listhead == first_perm_linestyle)
+	recycle_count = linetype_recycle_count;
+    else if (listhead == first_mono_linestyle)
+	recycle_count = mono_recycle_count;
+
+    if (tag == 0 && recycle_count > 0)
 	fprintf(stderr, "\tLinetypes repeat every %d unless explicitly defined\n",
-		linetype_recycle_count);
+		recycle_count);
 }
 
 
@@ -3246,9 +3290,7 @@ show_arrowstyle(int tag)
 	    fflush(stderr);
 
 	    fprintf(stderr, "\t %s %s",
-		    this_arrowstyle->arrow_properties.head ?
-		    (this_arrowstyle->arrow_properties.head==2 ?
-		     " both heads " : " one head ") : " nohead",
+		    arrow_head_names[this_arrowstyle->arrow_properties.head],
 		    this_arrowstyle->arrow_properties.layer ? "front" : "back");
 	    save_linetype(stderr, &(this_arrowstyle->arrow_properties.lp_properties), FALSE);
 	    fputc('\n', stderr);

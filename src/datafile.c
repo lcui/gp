@@ -1,5 +1,5 @@
 #ifndef lint
-static char *RCSid() { return RCSid("$Id: datafile.c,v 1.290.2.9 2015/04/22 22:25:26 sfeam Exp $"); }
+static char *RCSid() { return RCSid("$Id: datafile.c,v 1.290.2.30 2017/02/19 19:47:48 sfeam Exp $"); }
 #endif
 
 /* GNUPLOT - datafile.c */
@@ -235,10 +235,10 @@ TBOOLEAN df_nofpe_trap = FALSE;
 
 /* private variables */
 
-/* in order to allow arbitrary data line length, we need to use the heap
- * might consider free-ing it in df_close, especially for small systems
+/* Bookkeeping for df_fgets() and df_gets().
+ * Must be initialized before any callers to either function.
  */
-static char *line = NULL;
+static char *df_line = NULL;
 static size_t max_line_len = 0;
 #define DATA_LINE_BUFSIZ 160
 
@@ -272,6 +272,7 @@ static TBOOLEAN index_found = FALSE;
 static int df_longest_columnhead = 0;
 
 /* stuff for every point:line */
+static TBOOLEAN set_every = FALSE;
 static int everypoint = 1;
 static int firstpoint = 0;
 static int lastpoint = MAXINT;
@@ -288,10 +289,17 @@ static int df_skip_at_front = 0;
 static int df_pseudodata = 0;
 static int df_pseudorecord = 0;
 static int df_pseudospan = 0;
+static double df_pseudovalue_0 = 0;
+static double df_pseudovalue_1 = 0;
 
 /* for datablocks */
 static TBOOLEAN df_datablock = FALSE;
 static char **df_datablock_line = NULL;
+
+/* track dimensions of input matrix/array/image */
+static unsigned int df_xpixels;
+static unsigned int df_ypixels;
+static TBOOLEAN df_transpose;
 
 /* parsing stuff */
 struct use_spec_s use_spec[MAXDATACOLS];
@@ -326,7 +334,7 @@ static struct curve_points *df_current_plot;	/* used to process histogram labels
 #define NO_COLUMN_HEADER (-99)  /* some value that can never be a real column */
 static int column_for_key_title = NO_COLUMN_HEADER;
 static TBOOLEAN df_already_got_headers = FALSE;
-static char *df_key_title = NULL;     /* filled in from column header if requested */
+char *df_key_title = NULL;     /* filled in from column header if requested */
 
 
 /* Binary *read* variables used by df_readbinary().
@@ -610,12 +618,13 @@ static const char *matrix_general_binary_conflict_msg
 static char *
 df_gets()
 {
-    int len = 0;
+    /* Initialization must happen in all paths */
+    if (max_line_len < DATA_LINE_BUFSIZ) {
+	max_line_len = DATA_LINE_BUFSIZ;
+	df_line = gp_alloc(max_line_len, "datafile line buffer");
+    }
 
     /* HBB 20000526: prompt user for inline data, if in interactive mode */
-    /* EAM 08mar2008: we'd like to call readline(), but this only works
-     * if isatty(stdin). Do all platforms have an equivalent to isatty()?
-     */
     if (mixed_data_fp && interactive)
 	fputs("input data ('e' ends) > ", stderr);
 
@@ -626,33 +635,48 @@ df_gets()
     if (df_datablock)
 	return *(df_datablock_line++);
 
-    if (!fgets(line, max_line_len, data_fp))
+    return df_fgets(data_fp);
+}
+
+/*}}} */
+
+/*{{{  char *df_gets() */
+/* 
+ * This one is shared by df_gets() and by datablock.c:datablock_command
+ */
+char *
+df_fgets( FILE *fin )
+{
+    int len = 0;
+
+    /* Initialization must happen in all paths */
+    if (max_line_len < DATA_LINE_BUFSIZ) {
+	max_line_len = DATA_LINE_BUFSIZ;
+	df_line = gp_alloc(max_line_len, "datafile line buffer");
+    }
+
+    if (!fgets(df_line, max_line_len, fin))
 	return NULL;
 
     if (mixed_data_fp)
 	++inline_num;
 
     for (;;) {
-	len += strlen(line + len);
+	len += strlen(df_line + len);
 
-	if (len > 0 && line[len - 1] == '\n') {
+	if (len > 0 && df_line[len - 1] == '\n') {
 	    /* we have read an entire text-file line.
 	     * Strip the trailing linefeed and return
 	     */
-	    line[len - 1] = 0;
-	    return line;
+	    df_line[len - 1] = 0;
+	    return df_line;
 	}
-	/* buffer we provided may not be full - dont grab extra
-	 * memory un-necessarily. This may trap a problem with last
-	 * line in file not being properly terminated - each time
-	 * through a replot loop, it was doubling buffer size
-	 */
 
 	if ((max_line_len - len) < 32)
-	    line = gp_realloc(line, max_line_len *= 2, "datafile line buffer");
+	    df_line = gp_realloc(df_line, max_line_len *= 2, "datafile line buffer");
 
-	if (!fgets(line + len, max_line_len - len, data_fp))
-	    return line;        /* unexpected end of file, but we have something to do */
+	if (!fgets(df_line + len, max_line_len - len, fin))
+	    return df_line;        /* unexpected end of file, but we have something to do */
     }
 
     /* NOTREACHED */
@@ -1019,7 +1043,7 @@ df_open(const char *cmd_filename, int max_using, struct curve_points *plot)
 {
     int name_token = c_token - 1;
     TBOOLEAN duplication = FALSE;
-    TBOOLEAN set_index = FALSE, set_every = FALSE, set_skip = FALSE;
+    TBOOLEAN set_index = FALSE, set_skip = FALSE;
     TBOOLEAN set_using = FALSE;
     TBOOLEAN set_matrix = FALSE;
 
@@ -1031,7 +1055,6 @@ df_open(const char *cmd_filename, int max_using, struct curve_points *plot)
 	data_fp = NULL;
     }
 
-    /*{{{  initialise static variables */
     free(df_format);
     df_format = NULL;         /* no format string */
 
@@ -1055,6 +1078,7 @@ df_open(const char *cmd_filename, int max_using, struct curve_points *plot)
     blank_count = 2;
     /* by initialising blank_count, leading blanks will be ignored */
 
+    set_every = FALSE;
     everypoint = everyline = 1; /* unless there is an every spec */
     firstpoint = firstline = 0;
     lastpoint = lastline = MAXINT;
@@ -1068,15 +1092,29 @@ df_open(const char *cmd_filename, int max_using, struct curve_points *plot)
     df_matrix_rowheaders = FALSE;
     df_skip_at_front = 0;
 
+    df_xpixels = 0;
+    df_ypixels = 0;
+    df_transpose = FALSE;
+
     df_eof = 0;
 
     /* Save for use by df_readline(). */
     /* Perhaps it should be a parameter to df_readline? */
     df_current_plot = plot;
+
+    /* If 'set key autotitle columnhead' is in effect we always treat the
+     * first data row as non-data (df_readline() will return DF_COLUMNHEADERS
+     * rather than the column count).  This is true even if the key is off
+     * or the data is read from 'stats' or from 'fit' rather than plot.
+     * FIXME:  This should probably be controlled by an option to 
+     *         'set datafile' rather than 'set key'.  Or maybe both?
+     */
     column_for_key_title = NO_COLUMN_HEADER;
-    parse_1st_row_as_headers = FALSE;
     df_already_got_headers = FALSE;
-    /*}}} */
+    if ((&keyT)->auto_titles == COLUMNHEAD_KEYTITLES)
+	parse_1st_row_as_headers = TRUE;
+    else
+	parse_1st_row_as_headers = FALSE;
 
     if (!cmd_filename)
 	int_error(c_token, "missing filename");
@@ -1256,11 +1294,30 @@ df_open(const char *cmd_filename, int max_using, struct curve_points *plot)
     df_datablock = FALSE;
     df_datablock_line = NULL;
 
-    /* here so it's not done for every line in df_readline */
-    if (max_line_len < DATA_LINE_BUFSIZ) {
-	max_line_len = DATA_LINE_BUFSIZ;
-	line = gp_alloc(max_line_len, "datafile line buffer");
+    if (plot) {
+	/* Save the matrix/array/image dimensions for binary image plot styles	*/
+	plot->image_properties.ncols = df_xpixels;
+	plot->image_properties.nrows = df_ypixels;
+	FPRINTF((stderr,"datafile.c:%d (ncols,nrows) set to (%d,%d)\n", __LINE__,
+		df_xpixels, df_ypixels));
+
+	if (set_every && df_xpixels && df_ypixels) {
+	    plot->image_properties.ncols = 1 + 
+		    ((int)(GPMIN(lastpoint,df_xpixels-1)) - firstpoint) / everypoint;
+	    plot->image_properties.nrows = 1 +
+		    ((int)(GPMIN(lastline,df_ypixels-1)) - firstline) / everyline;
+	    FPRINTF((stderr,"datafile.c:%d  adjusting to (%d, %d)\n", __LINE__,
+		    plot->image_properties.ncols, plot->image_properties.nrows));
+	}
+	if (df_transpose) {
+	    unsigned int temp = plot->image_properties.ncols;
+	    plot->image_properties.ncols = plot->image_properties.nrows;
+	    plot->image_properties.nrows = temp;
+	    FPRINTF((stderr,"datafile.c:%d  adjusting to (%d, %d)\n", __LINE__,
+		    plot->image_properties.ncols, plot->image_properties.nrows));
+	}
     }
+
     /*}}} */
 
     /*{{{  open file */
@@ -1277,6 +1334,11 @@ df_open(const char *cmd_filename, int max_using, struct curve_points *plot)
 	    int_error(name_token, "cannot plot from stdin/stdout/stderr");
 	else if ((data_fp = fdopen(data_fd, "r")) == (FILE *) NULL)
 	    int_error(name_token, "cannot open file descriptor for reading data");
+
+	/* if this stream isn't seekable, set it to volatile */
+        if (fseek(data_fp, 0, SEEK_CUR) < 0)
+	    volatile_data = TRUE;
+
     } else
 #endif /* HAVE_FDOPEN */
 #if defined(PIPES)
@@ -1297,10 +1359,9 @@ df_open(const char *cmd_filename, int max_using, struct curve_points *plot)
 	if (!data_fp)
 	    data_fp = stdin;
 	mixed_data_fp = TRUE;   /* don't close command file */
-    } else if (df_filename[0] == '+') {
-	if (strlen(df_filename) == 1)
+    } else if (!strcmp(df_filename,"+")) {
 	    df_pseudodata = 1;
-	else if (df_filename[1] == '+' && strlen(df_filename) == 2)
+    } else if (!strcmp(df_filename,"++")) {
 	    df_pseudodata = 2;
     } else if (df_filename[0] == '$') {
 	df_datablock = TRUE;
@@ -1334,8 +1395,18 @@ df_open(const char *cmd_filename, int max_using, struct curve_points *plot)
      * ASCII matrix form, read in all the data to memory in preparation
      * for using df_readbinary() routine.
      */
-    if (df_matrix_file)
+    if (df_matrix_file) {
 	df_determine_matrix_info(data_fp);
+
+	/* Image size bookkeeping for ascii uniform matrices */
+	/* NB: If we're inside a 'stats' command there is no plot */
+	if (!df_binary_file && plot) {
+	    plot->image_properties.ncols = df_xpixels;
+	    plot->image_properties.nrows = df_ypixels;
+	    FPRINTF((stderr,"datafile.c:%d  ascii uniform matrix dimensions %d x %d \n",
+		    __LINE__, df_xpixels, df_ypixels));
+	}
+    }    
 
     /* General binary, matrix binary and ASCII matrix all use the
      * df_readbinary() routine.
@@ -1421,10 +1492,10 @@ df_close()
 void
 df_showdata()
 {
-  if (data_fp && df_filename && line) {
+  if (data_fp && df_filename && df_line) {
     /* display no more than 77 characters */
-    fprintf(stderr, "%.77s%s\n%s:%d:", line,
-	    (strlen(line) > 77) ? "..." : "",
+    fprintf(stderr, "%.77s%s\n%s:%d:", df_line,
+	    (strlen(df_line) > 77) ? "..." : "",
 	    df_filename, df_line_number);
   }
 }
@@ -1493,6 +1564,8 @@ plot_option_index()
 
     /* Numerical index list */
     df_lower_index = int_expression();
+    if (df_lower_index < 0)
+	int_error(c_token,"index must be non-negative");
     if (equals(c_token, ":")) {
 	++c_token;
 	if (equals(c_token, ":")) {
@@ -1863,16 +1936,11 @@ df_readascii(double v[], int max)
 	    /*{{{  do a sscanf */
 	    int i;
 
-	    /* plot commands never request more than 7 columns */
-	    /* "fit" can use more, but we only handle 7 in the format */
-	    if (max > 7)
-		int_error(NO_CARET,"Formatted input can only handle 7 data columns");
-
 	    /* check we have room for at least 7 columns */
 	    if (df_max_cols < 7)
 		expand_df_column(7);
 
-	    df_no_cols = sscanf(line, df_format,
+	    df_no_cols = sscanf(s, df_format,
 				&df_column[0].datum,
 				&df_column[1].datum,
 				&df_column[2].datum,
@@ -1893,6 +1961,15 @@ df_readascii(double v[], int max)
 	} else
 	    df_tokenise(s);
 
+	/* df_tokenise already processed everything, but in the case of pseudodata
+	 * '+' or '++' the value itself was passed as an ascii string formatted by
+	 * "%g".  We can do better than this by substituting in the binary value.
+	 */
+	if (df_pseudodata > 0)
+	    df_column[0].datum = df_pseudovalue_0;
+	if (df_pseudodata > 1)
+	    df_column[1].datum = df_pseudovalue_1;
+
 	/* Always save the contents of the first row in case it is needed for
 	 * later access via column("header").  However, unless we know for certain that
 	 * it contains headers only, e.g. via parse_1st_row_as_headers or 
@@ -1906,7 +1983,7 @@ df_readascii(double v[], int max)
 		if (df_column[j].header) {
 		    if (df_longest_columnhead < strlen(df_column[j].header))
 			df_longest_columnhead = strlen(df_column[j].header);
-		    FPRINTF((stderr,"Col %d: \"%s\"\n",j,df_column[j].header));
+		    FPRINTF((stderr,"Col %d: \"%s\"\n",j+1,df_column[j].header));
 		}
 	    }
 	    df_already_got_headers = TRUE;
@@ -2047,6 +2124,16 @@ df_readascii(double v[], int max)
 		    evaluate_inside_using = TRUE;
 		    evaluate_at(use_spec[output].at, &a);
 		    evaluate_inside_using = FALSE;
+		    /* If column N contains the "missing" flag and is referenced by */
+		    /* using N then we caught it already.  Here we are checking for */
+		    /* indirect references like using ($N) or using "header_of_N".  */
+		    /* It does not catch deeper evaluations like using (2*f($N)).   */
+		    if ((a.type == CMPLX) && isnan(a.v.cmplx_val.real)
+		    && (a.v.cmplx_val.imag == DF_MISSING)) {
+			return_value = DF_MISSING;
+			v[output] = not_a_number();
+			continue;
+		    }
 		    if (undefined) {
 			return_value = DF_UNDEFINED;
 			v[output] = not_a_number();
@@ -2251,6 +2338,7 @@ df_determine_matrix_info(FILE *fin)
 	float fdummy;
 	off_t nc, nr;	/* off_t because they contribute to fseek offset */
 	off_t flength;
+	int ierr;
 
 	/* Read first value for number of columns. */
 	fdummy = df_read_a_float(fin);
@@ -2266,7 +2354,9 @@ df_determine_matrix_info(FILE *fin)
 
 	/* Read nc+1 value for corner_1 x. */
 	if (nc > 1) {
-	    fseek(fin, (nc-2)*sizeof(float), SEEK_CUR);
+	    ierr = fseek(fin, (nc-2)*sizeof(float), SEEK_CUR);
+	    if (ierr < 0)
+		int_error(NO_CARET, "seek error in binary input stream - %s", strerror(errno));
 	    fdummy = df_read_a_float(fin);
 	}
 	df_matrix_corner[1][0] = fdummy;
@@ -2275,14 +2365,18 @@ df_determine_matrix_info(FILE *fin)
 	df_matrix_corner[0][1] = df_read_a_float(fin);
 
 	/* Compute length of file and number of columns. */
-	fseek(fin, 0L, SEEK_END);
+	ierr = fseek(fin, 0L, SEEK_END);
+	if (ierr < 0)
+	    int_error(NO_CARET, "seek error in binary input stream - %s", strerror(errno));
 	flength = ftell(fin)/sizeof(float);
 	nr = flength/(nc + 1);
 	if (nr*(nc + 1) != flength)
 	    int_error(NO_CARET, "File doesn't factorize into full matrix");
 
 	/* Read last value for corner_1 y */
-	fseek(fin, -(nc + 1)*sizeof(float), SEEK_END);
+	ierr = fseek(fin, -(nc + 1)*sizeof(float), SEEK_END);
+	if (ierr < 0)
+	    int_error(NO_CARET, "seek error in binary input stream - %s", strerror(errno));
 	df_matrix_corner[1][1] = df_read_a_float(fin);
 
 	/* Set up scan information for df_readbinary(). */
@@ -2290,7 +2384,9 @@ df_determine_matrix_info(FILE *fin)
 	df_bin_record[0].scan_dim[1] = nr;
 
 	/* Reset counter file pointer. */
-	fseek(fin, 0L, SEEK_SET);
+	ierr = fseek(fin, 0L, SEEK_SET);
+	if (ierr < 0)
+	    int_error(NO_CARET, "seek error in binary input stream - %s", strerror(errno));
 
     } else {
 
@@ -2313,6 +2409,12 @@ df_determine_matrix_info(FILE *fin)
 	/* here so that it affects data fields read from the input file.      */
 	set_numeric_locale();
 
+	/* "skip" option to skip lines at start of ascii file */
+	while (df_skip_at_front > 0) {
+	    df_gets();
+	    df_skip_at_front--;
+	}
+
 	/* Keep reading matrices until file is empty. */
 	while (1) {
 	    if ((matrix = df_read_matrix(&nr, &nc)) != NULL) {
@@ -2334,6 +2436,17 @@ df_determine_matrix_info(FILE *fin)
 		df_bin_record[index].scan_dim[1] = nr;
 		df_bin_record[index].scan_dim[2] = 0;
 		df_bin_file_endianess = THIS_COMPILER_ENDIAN;
+
+		/* Save matrix dimensions in case it contains an image */
+		df_xpixels = nc;
+		df_ypixels = nr;
+
+		if (set_every) {
+		    df_xpixels = 1 + ((int)(GPMIN(lastpoint,df_xpixels-1)) - firstpoint) / everypoint;
+		    df_ypixels = 1 + ((int)(GPMIN(lastline,df_ypixels-1)) - firstline) / everyline;
+		    FPRINTF((stderr,"datafile.c:%d filtering (%d,%d) to (%d,%d)\n",
+				 __LINE__, nc, nr, df_xpixels, df_ypixels));
+		}
 
 		/* This matrix is the one (and only) requested by name.	*/
 		/* Dummy up index range and skip rest of file.		*/
@@ -2371,21 +2484,8 @@ df_determine_matrix_info(FILE *fin)
 void
 f_dollars(union argument *x)
 {
-    int column = x->v_arg.v.int_val;
-    struct value a;
-
-    if (column == -3)	/* pseudocolumn -3 means "last column" */
-	column = df_no_cols;
-
-    if (column == 0) {
-	push(Gcomplex(&a, (double) df_datum, 0.0));     /* $0 */
-    } else if (column > df_no_cols || df_column[column-1].good != DF_GOOD) {
-	undefined = TRUE;
-	/* Nov 2014: This is needed in case the value is referenced */
-	/* in an expression inside a 'using' clause.		    */
-	push(Gcomplex(&a, not_a_number(), 0.0));
-    } else
-	push(Gcomplex(&a, df_column[column-1].datum, 0.0));
+    push(&x->v_arg);
+    f_column(x);
 }
 
 /*}}} */
@@ -2444,13 +2544,16 @@ f_column(union argument *arg)
 	push(Gcomplex(&a, (double) df_datum, 0.0));
     else if (column == -3)	/* pseudocolumn -3 means "last column" */
 	push(Gcomplex(&a, df_column[df_no_cols - 1].datum, 0.0));
-    else if (column < 1
-	     || column > df_no_cols
-	     || df_column[column - 1].good != DF_GOOD
-	     ) {
+    else if (column < 1 || column > df_no_cols) {
 	undefined = TRUE;
 	/* Nov 2014: This is needed in case the value is referenced */
 	/* in an expression inside a 'using' clause.		    */
+	push(Gcomplex(&a, not_a_number(), 0.0));
+    } else if (df_column[column-1].good == DF_MISSING) {
+	/* Doesn't set undefined to TRUE although perhaps it should */
+	push(Gcomplex(&a, not_a_number(), (double)DF_MISSING));
+    } else if (df_column[column-1].good != DF_GOOD) {
+	undefined = TRUE;
 	push(Gcomplex(&a, not_a_number(), 0.0));
     } else
 	push(Gcomplex(&a, df_column[column - 1].datum, 0.0));
@@ -2632,11 +2735,17 @@ f_timecolumn(union argument *arg)
 static int
 check_missing(char *s)
 {
+    /* Match the string specified by 'set datafile missing' */
     if (missing_val != NULL) {
 	size_t len = strlen(missing_val);
-	if (strncmp(s, missing_val, len) == 0 &&
-	    (isspace((unsigned char) s[len]) || !s[len]))
-	    return 1;   /* store undefined point in plot */
+	if (strncmp(s, missing_val, len) == 0) {
+	    s += len;
+	    if (!(*s))
+		return 1;
+	    if (!df_separators && isspace((unsigned char) *s))
+		return 1;
+	    /* s now points to the character after the "missing" sequence */
+	}
     }
     /* April 2013 - Treat an empty csv field as "missing" */
     if (df_separators && strchr(df_separators,*s))
@@ -2741,7 +2850,9 @@ df_set_key_title(struct curve_points *plot)
 	    char *trailer = NULL;
 	    columnhead = strtol(placeholder+11, &trailer, 0);
 	    *placeholder = '\0';
-	    sprintf(newtitle, "%s%s%s", plot->title, 
+	    if (trailer && *trailer == '@')
+		trailer++;
+	    sprintf(newtitle, "%s%s%s", plot->title,
 		    (columnhead <= 0) ? df_key_title :
 		    (columnhead <= df_no_cols) ? df_column[columnhead-1].header : "",
 		    trailer ? trailer : "");
@@ -2776,7 +2887,9 @@ df_set_key_title_columnhead(struct curve_points *plot)
     } else if (!END_OF_COMMAND && isanumber(c_token)) {
 	column_for_key_title = int_expression();
     } else {
-	if (df_no_use_specs == 1)
+	if (!plot) /* stats "name" option rather than plot title */
+	    column_for_key_title = use_spec[0].column;
+	else if (df_no_use_specs == 1)
 	    column_for_key_title = use_spec[0].column;
 	else if (plot->plot_type == DATA3D)
 	    column_for_key_title = use_spec[2].column;
@@ -3386,8 +3499,13 @@ plot_option_binary(TBOOLEAN set_matrix, TBOOLEAN set_default)
 	    }
 
 	    /* Unless only querying settings, call the routine to prep binary data parameters. */
-	    if (df_plot_mode != MODE_QUERY)
+	    if (df_plot_mode != MODE_QUERY) {
 		(*binary_input_function)();
+		df_xpixels = df_bin_record[0].scan_dim[0];
+		df_ypixels = df_bin_record[0].scan_dim[1];
+		FPRINTF((stderr,"datafile.c:%d  image dimensions %d x %d\n", __LINE__,
+			df_xpixels, df_ypixels));
+	    }
 
 	    /* Now, at this point anything that was filled in for "scan" should
 	     * override the "cart" variables.
@@ -3426,11 +3544,16 @@ plot_option_binary(TBOOLEAN set_matrix, TBOOLEAN set_default)
 	    df_matrix_file = FALSE;
 	    plot_option_array();
 	    set_record = TRUE;
+	    df_xpixels = df_bin_record[df_num_bin_records - 1].cart_dim[1];
+	    df_ypixels = df_bin_record[df_num_bin_records - 1].cart_dim[0];
+	    FPRINTF((stderr,"datafile.c:%d  record dimensions %d x %d\n", __LINE__,
+		df_xpixels, df_ypixels));
 	    continue;
 	}
 
 	/* look for array */
 	if (almost_equals(c_token, "arr$ay")) {
+	    int i;
 	    if (set_array) { duplication=TRUE; break; }
 	    c_token++;
 	    /* Above keyword not part of pre-existing binary definition.  So use general binary. */
@@ -3438,11 +3561,15 @@ plot_option_binary(TBOOLEAN set_matrix, TBOOLEAN set_default)
 		int_error(c_token, matrix_general_binary_conflict_msg);
 	    df_matrix_file = FALSE;
 	    plot_option_array();
-	    {int i;
-	    for (i = 0; i < df_num_bin_records; i++)
-		df_bin_record[i].scan_generate_coord = TRUE;  /* Indicate that coordinate info should be generated by gnuplot code. */
+	    for (i = 0; i < df_num_bin_records; i++) {
+		/* Indicate that coordinate info should be generated internally */
+		df_bin_record[i].scan_generate_coord = TRUE;
 	    }
 	    set_array = TRUE;
+	    df_xpixels = df_bin_record[df_num_bin_records - 1].cart_dim[0];
+	    df_ypixels = df_bin_record[df_num_bin_records - 1].cart_dim[1];
+	    FPRINTF((stderr,"datafile.c:%d  array dimensions %d x %d\n", __LINE__,
+		df_xpixels, df_ypixels));
 	    continue;
 	}
 
@@ -3564,6 +3691,8 @@ plot_option_binary(TBOOLEAN set_matrix, TBOOLEAN set_default)
 	if (equals(c_token, "scan")) {
 	    if (set_scan) { duplication=TRUE; break; }
 	    c_token++;
+	    if (almost_equals(c_token+1, "yx$z"))
+		df_transpose = TRUE;
 	    plot_option_multivalued(DF_SCAN, 0);
 	    set_scan = TRUE;
 	    continue;
@@ -3577,6 +3706,7 @@ plot_option_binary(TBOOLEAN set_matrix, TBOOLEAN set_default)
 	    for (i=0; i < df_num_bin_records; i++)
 		memcpy(df_bin_record[i].cart_scan, df_bin_scan_table_2D[TRANSPOSE_INDEX].scan, sizeof(df_bin_record[0].cart_scan));
 	    set_scan = TRUE;
+	    df_transpose = TRUE;
 	    continue;
 	}
 
@@ -4572,6 +4702,11 @@ df_readbinary(double v[], int max)
 	    scan_size[0] = this_record->scan_dim[0];
 	    scan_size[1] = this_record->scan_dim[1];
 
+	    FPRINTF((stderr,"datafile.c:%d matrix dimensions %d x %d\n",
+			__LINE__, scan_size[1], scan_size[0]));
+	    df_xpixels = scan_size[1];
+	    df_ypixels = scan_size[0];
+
 	    if (scan_size[0] == 0)
 		int_error(NO_CARET, "Scan size of matrix is zero");
 
@@ -5011,8 +5146,10 @@ df_readbinary(double v[], int max)
 		    evaluate_inside_using = TRUE;
 		    evaluate_at(use_spec[output].at, &a);
 		    evaluate_inside_using = FALSE;
-		    if (undefined)
+		    if (undefined) {
+			v[output] = not_a_number();
 			return DF_UNDEFINED; 
+		    }
 
 		    if (a.type == STRING) {
 			if (use_spec[output].expected_type == CT_STRING) {
@@ -5220,7 +5357,8 @@ df_generate_pseudodata()
 	    t = AXIS_DE_LOG_VALUE(x_axis, t);
 	if (df_current_plot && df_current_plot->sample_var)
 	    Gcomplex(&(df_current_plot->sample_var->udv_value), t, 0.0);
-	sprintf(line,"%g",t);
+	df_pseudovalue_0 = t;
+	sprintf(df_line,"%g",t);
 	++df_pseudorecord;
     }
 
@@ -5233,15 +5371,8 @@ df_generate_pseudodata()
 	AXIS_INDEX u_axis = FIRST_X_AXIS;
 	AXIS_INDEX v_axis = FIRST_Y_AXIS;
 
-	if ((df_pseudorecord >= nusteps) && (df_pseudorecord > 0)) {
-	    df_pseudorecord = 0;
-	    if (++df_pseudospan >= nvsteps)
-		return NULL;
-	    else
-		return ""; /* blank record for end of scan line */
-	}
-
-	if (df_pseudospan == 0) {
+	/* Fill in the static variables only once per plot */
+	if (df_pseudospan == 0 && df_pseudorecord == 0) {
 	    if (samples_1 < 2 || samples_2 < 2 || iso_samples_1 < 2 || iso_samples_2 < 2)
 		int_error(NO_CARET, "samples or iso_samples < 2. Must be at least 2.");
 	    if (parametric) {
@@ -5269,17 +5400,37 @@ df_generate_pseudodata()
 	    nvsteps = iso_samples_2;
 	}
 
+	/* wrap at end of each line */
+	if (df_pseudorecord >= nusteps) {
+	    df_pseudorecord = 0;
+	    if (++df_pseudospan >= nvsteps)
+		return NULL;
+	    else
+		return ""; /* blank record for end of scan line */
+	}
+
 	/* Duplicate algorithm from calculate_set_of_isolines() */
 	u = u_min + df_pseudorecord * u_step;
 	v = v_max - df_pseudospan * v_isostep;
-	if (parametric) 
-	    sprintf(line,"%g %g", u, v);
-	else
-	    sprintf(line,"%g %g", AXIS_DE_LOG_VALUE(u_axis,u), AXIS_DE_LOG_VALUE(v_axis,v));
+
+	/* Round-off error is most visible at the border */
+	if (df_pseudorecord == nusteps-1)
+	    u = u_max;
+	if (df_pseudospan == nvsteps-1)
+	    v = v_min;
+
+	if (parametric) {
+	    df_pseudovalue_0 = u;
+	    df_pseudovalue_1 = v;
+	} else {
+	    df_pseudovalue_0 = AXIS_DE_LOG_VALUE(u_axis,u);
+	    df_pseudovalue_1 = AXIS_DE_LOG_VALUE(v_axis,v);
+	}
+	sprintf(df_line,"%g %g", df_pseudovalue_0, df_pseudovalue_1);
 	++df_pseudorecord;
     }
 
-    return line;
+    return df_line;
 }
 
 /* Allocate space for more data columns as needed */

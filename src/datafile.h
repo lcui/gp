@@ -1,5 +1,5 @@
 /*
- * $Id: datafile.h,v 1.49 2014/06/14 23:22:56 markisch Exp $
+ * $Id: datafile.h,v 1.49.2.2 2016/08/25 04:28:36 sfeam Exp $
  */
 
 /* GNUPLOT - datafile.h */
@@ -131,11 +131,15 @@ extern TBOOLEAN df_nofpe_trap;
 extern TBOOLEAN evaluate_inside_using;
 extern TBOOLEAN df_warn_on_missing_columnheader;
 
+/* Used by plot title columnhead, stats name columnhead */
+extern char *df_key_title;
+
 /* Prototypes of functions exported by datafile.c */
 
 int df_open __PROTO((const char *, int, struct curve_points *));
 int df_readline __PROTO((double [], int));
 void df_close __PROTO((void));
+char * df_fgets __PROTO((FILE *));
 void df_showdata __PROTO((void));
 int df_2dbinary __PROTO((struct curve_points *));
 int df_3dmatrix __PROTO((struct surface_points *, int));

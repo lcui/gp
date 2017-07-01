@@ -1,5 +1,5 @@
 /*
- * $Id: boundary.c,v 1.15.2.3 2015/03/19 17:35:39 sfeam Exp $
+ * $Id: boundary.c,v 1.15.2.6 2016/11/15 00:22:53 sfeam Exp $
  */
 
 /* GNUPLOT - boundary.c */
@@ -68,7 +68,7 @@ static int title_y;
 /*
  * These quantities are needed in do_plot() e.g. for histogtram title layout
  */
-int key_entry_height;		/* bigger of t->v_char, pointsize*t->v_tick */
+int key_entry_height;		/* bigger of t->v_char, t->v_tic */
 int key_point_offset;		/* offset from x for point sample */
 int key_col_wth, yl_ref;
 int ylabel_x, y2label_x, xlabel_y, x2label_y;
@@ -764,10 +764,10 @@ boundary(struct curve_points *plots, int count)
      *     (some of these may not be used) */
 
     x2label_y = plot_bounds.ytop + x2tic_height + x2tic_textheight + x2label_textheight;
-    if (x2tic_textheight && (title_textheight || x2label_textheight))
-	x2label_y += t->v_char;
-
     title_y = x2label_y + title_textheight;
+
+    if (x2tic_textheight && x2label_textheight)
+	x2label_y += t->v_char;
 
     ylabel_y = plot_bounds.ytop + x2tic_height + x2tic_textheight + ylabel_textheight;
 
@@ -981,13 +981,12 @@ do_key_layout(legend_key *key)
     key_xleft = 0;
 
     if (key->swidth >= 0) {
-	int p_width = pointsize * t->h_tic;
-	key_sample_width = key->swidth * t->h_char + p_width;
+	key_sample_width = key->swidth * t->h_char + t->h_tic;
     } else {
 	key_sample_width = 0;
     }
 
-    key_entry_height = pointsize * t->v_tic * 1.25 * key->vert_factor;
+    key_entry_height = t->v_tic * 1.25 * key->vert_factor;
     if (key_entry_height < t->v_char)
 	key_entry_height = t->v_char * key->vert_factor;
     /* HBB 20020122: safeguard to prevent division by zero later */
@@ -1284,7 +1283,6 @@ do_key_sample(
 
     } else if (this_plot->plot_style == VECTOR && t->arrow) {
 	    apply_head_properties(&(this_plot->arrow_properties));
-	    curr_arrow_headlength = -1;
 	    draw_clip_arrow(xl + key_sample_left, yl, xl + key_sample_right, yl,
 			this_plot->arrow_properties.head);
 

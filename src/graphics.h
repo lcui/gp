@@ -1,5 +1,5 @@
 /*
- * $Id: graphics.h,v 1.61.2.2 2015/03/19 17:35:40 sfeam Exp $
+ * $Id: graphics.h,v 1.61.2.4 2016/05/11 18:38:51 sfeam Exp $
  */
 
 /* GNUPLOT - graphics.h */
@@ -65,13 +65,14 @@ typedef struct curve_points {
 
     /* 2D and 3D plot structure fields overlay only to this point */
     filledcurves_opts filledcurves_options;
+    int base_linetype;		/* before any calls to load_linetype(), lc variable */
+				/* analogous to hidden3d_top_linetype in graph3d.h  */
     int ellipseaxes_units;              /* Only used if plot_style == ELLIPSES */    
     struct histogram_style *histogram;	/* Only used if plot_style == HISTOGRAM */
     int histogram_sequence;	/* Ordering of this dataset within the histogram */
     enum PLOT_SMOOTH plot_smooth; /* which "smooth" method to be used? */
     double smooth_parameter;	/* e.g. optional bandwidth for smooth kdensity */
     int boxplot_factors;	/* Only used if plot_style == BOXPLOT */
-    int *boxplot_factor_order;	/* Only used if plot_style == BOXPLOT */
     int p_max;			/* how many points are allocated */
     int p_count;		/* count of points in points */
     int x_axis;			/* FIRST_X_AXIS or SECOND_X_AXIS */
@@ -114,6 +115,6 @@ void do_polygon __PROTO((int dimensions, t_polygon *p, int style, t_clip_object 
 #define place_objects(listhead,layer,dimensions) /* void() */
 #endif
 
-int filter_boxplot __PROTO((struct curve_points *, int index));
+int filter_boxplot __PROTO((struct curve_points *));
 
 #endif /* GNUPLOT_GRAPHICS_H */

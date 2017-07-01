@@ -1,5 +1,5 @@
 #ifndef lint
-static char *RCSid() { return RCSid("$Id: readline.c,v 1.62 2014/05/09 22:14:12 broeker Exp $"); }
+static char *RCSid() { return RCSid("$Id: readline.c,v 1.62.2.4 2016/08/23 00:23:34 sfeam Exp $"); }
 #endif
 
 /* GNUPLOT - readline.c */
@@ -77,6 +77,7 @@ getc_wrapper(FILE* fp /* should be stdin, supplied by readline */)
     int c;
 
     while (1) {
+	errno = 0;
 #ifdef USE_MOUSE
 	if (term && term->waitforinput && interactive) {
 	    c = term->waitforinput(0);
@@ -248,11 +249,11 @@ static int ansi_getc __PROTO((void));
 #  define TEXTGNUPLOT 0xf0
 #  ifdef WGP_CONSOLE
 #   define special_getc() win_getch()
-static char win_getch __PROTO((void));
+static int win_getch(void);
 #  else
 #   define special_getc() msdos_getch()
 #  endif /* WGP_CONSOLE */
-static char msdos_getch __PROTO((void));	/* HBB 980308: PROTO'ed it */
+static int msdos_getch(void);
 #  define DEL_ERASES_CURRENT_CHAR
 # endif				/* _Windows */
 
@@ -265,7 +266,7 @@ static char msdos_getch __PROTO((void));	/* HBB 980308: PROTO'ed it */
 #   include <conio.h>
 #  endif			/* __EMX__ */
 #  define special_getc() msdos_getch()
-static char msdos_getch();
+static int msdos_getch();
 #  define DEL_ERASES_CURRENT_CHAR
 # endif				/* MSDOS */
 
@@ -276,8 +277,8 @@ static char msdos_getch();
 #  undef special_getc()
 # endif				/* special_getc */
 # define special_getc() os2_getch()
-static char msdos_getch __PROTO((void));	/* HBB 980308: PROTO'ed it */
-static char os2_getch __PROTO((void));
+static int msdos_getch(void);
+static int os2_getch(void);
 #  define DEL_ERASES_CURRENT_CHAR
 #endif /* OS2 */
 
@@ -552,15 +553,18 @@ fn_completion(size_t anchor_pos, int direction)
 	start = cur_line + anchor_pos;
 	if (anchor_pos > 0) {
 	    /* first, look for a quote to start the string */
-	    for ( ; start > cur_line; start--) {
+	    for ( ; start >= cur_line; start--) {
 	        if ((*start == '"') || (*start == '\'')) {
 		    start++;
+		    /* handle pipe commands */
+		    if ((*start == '<') || (*start == '|'))
+			start++;
 		    break;
 		}
 	    }
-	    /* if not found, search for a space instead */
-	    if (start == cur_line) {
-		for (start = cur_line + anchor_pos ; start > cur_line; start--) {
+	    /* if not found, search for a space or a system command '!' instead */
+	    if (start <= cur_line) {
+		for (start = cur_line + anchor_pos; start >= cur_line; start--) {
 		    if ((*start == ' ') || (*start == '!')) {
 			start++;
 			break;
@@ -1130,7 +1134,7 @@ ansi_getc()
 #if defined(MSDOS) || defined(_Windows) || defined(OS2)
 
 #ifdef WGP_CONSOLE
-static char
+static int
 win_getch()
 {
     if (term && term->waitforinput)
@@ -1141,7 +1145,7 @@ win_getch()
 #endif
 
 /* Convert Arrow keystrokes to Control characters: */
-static char
+static int
 msdos_getch()
 {
 	char c;
@@ -1213,7 +1217,7 @@ msdos_getch()
 #ifdef OS2
 /* We need to call different procedures, dependent on the
    session type: VIO/window or an (XFree86) xterm */
-static char
+static int
 os2_getch() {
   static int IsXterm = 0;
   static int init = 0;

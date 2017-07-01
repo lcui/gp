@@ -1,5 +1,5 @@
 #ifndef lint
-static char *RCSid() { return RCSid("$Id: interpol.c,v 1.46.2.3 2015/02/09 19:48:27 sfeam Exp $"); }
+static char *RCSid() { return RCSid("$Id: interpol.c,v 1.46.2.6 2017/02/24 19:52:09 sfeam Exp $"); }
 #endif
 
 /* GNUPLOT - interpol.c */
@@ -874,9 +874,12 @@ do_cubic(
     xstart = GPMAX(this_points[0].x, sxmin);
     xend = GPMIN(this_points[num_points - 1].x, sxmax);
 
-    if (xstart >= xend)
-	int_error(plot->token,
-		  "Cannot smooth: no data within fixed xrange!");
+    if (xstart >= xend) {
+	/* This entire segment lies outside the current x range. */
+	for (i = 0; i < samples_1; i++)
+	    dest[i].type = OUTRANGE;
+	return;
+    }
 #endif
     xdiff = (xend - xstart) / (samples_1 - 1);
 
@@ -1266,7 +1269,7 @@ cp_implode(struct curve_points *cp)
 	    cp->points[j].x = x;
 	    if ( cp->plot_smooth == SMOOTH_FREQUENCY ||
 		 cp->plot_smooth == SMOOTH_CUMULATIVE ||
-		 cp->plot_smooth == SMOOTH_CUMULATIVE)
+		 cp->plot_smooth == SMOOTH_CUMULATIVE_NORMALISED)
 		k = 1;
 	    cp->points[j].y = y /= (double) k;
 	    cp->points[j].xhigh = sux / (double) k;
@@ -1353,6 +1356,10 @@ mcs_interp(struct curve_points *plot)
 #define C1	ylow
 #define C2	yhigh
 #define C3	z
+
+    /* Work with the un-logged y values */
+    for (i = 0; i < N-1; i++)
+	p[i].y = AXIS_DE_LOG_VALUE(plot->y_axis, p[i].y);
 
     for (i = 0; i < N-1; i++) {
 	p[i].DX = p[i+1].x - p[i].x;

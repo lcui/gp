@@ -1,5 +1,5 @@
 #ifndef lint
-static char *RCSid() { return RCSid("$Id: misc.c,v 1.188.2.8 2015/04/25 05:06:02 sfeam Exp $"); }
+static char *RCSid() { return RCSid("$Id: misc.c,v 1.188.2.11 2017/02/15 20:59:43 sfeam Exp $"); }
 #endif
 
 /* GNUPLOT - misc.c */
@@ -979,9 +979,13 @@ parse_dashtype(struct t_dashtype *dt)
     /* FIXME: Is the index enough or should we copy its contents into this one? */
     /* FIXME: What happens if there is a recursive definition? */
     } else {
-	res = int_expression() - 1;
+	res = int_expression();
 	if (res < 0)
-	    int_error(c_token - 1, "tag must be > 0");
+	    int_error(c_token - 1, "dashtype must be non-negative");
+	if (res == 0)
+	    res = DASHTYPE_AXIS;
+	else
+	    res = res - 1;
     }
 
     return res;
@@ -1074,10 +1078,12 @@ lp_parse(struct lp_style_type *lp, lp_class destination_class, TBOOLEAN allow_po
 	    continue;
 	}
 
-	/* This is so that "set obj ... lw N fc <colorspec>" doesn't eat */
-	/* up the colorspec as a line property.  We need to parse it later */
-	/* as a _fill_ property */
-	if ((destination_class == LP_NOFILL)
+	/* This is so that "set obj ... lw N fc <colorspec>" doesn't eat up the
+	 * fc colorspec as a line property.  We need to parse it later as a
+	 * _fill_ property. Also prevents "plot ... fc <col1> fs <foo> lw <baz>"
+	 * from generating an error claiming redundant line properties.
+	 */
+	if ((destination_class == LP_NOFILL || destination_class == LP_ADHOC)
 	&&  (equals(c_token,"fc") || almost_equals(c_token,"fillc$olor")))
 	    break;
 
@@ -1217,6 +1223,8 @@ lp_parse(struct lp_style_type *lp, lp_class destination_class, TBOOLEAN allow_po
 	    tmp = parse_dashtype(&newlp.custom_dash_pattern);
 	    /* Pull the dashtype from the list of already defined dashtypes, */
 	    /* but only if it we didn't get an explicit one back from parse_dashtype */ 
+	    if (tmp == DASHTYPE_AXIS)
+		lp->l_type = LT_AXIS;
 	    if (tmp >= 0)
 		tmp = load_dashtype(&newlp.custom_dash_pattern, tmp + 1);
 	    newlp.d_type = tmp;
@@ -1517,19 +1525,29 @@ arrow_use_properties(struct arrow_style_type *arrow, int tag)
      *  copies its data into the structure 'ap'. */
     struct arrowstyle_def *this;
 
+    /* If a color has already been set for this arrow, keep it */
+    struct t_colorspec save_colorspec = arrow->lp_properties.pm3d_color;
+
+    /* Default if requested style is not found */
+    default_arrow_style(arrow);
+
     this = first_arrowstyle;
     while (this != NULL) {
 	if (this->tag == tag) {
 	    *arrow = this->arrow_properties;
-	    return;
+	    break;
 	} else {
 	    this = this->next;
 	}
     }
 
     /* tag not found: */
-    default_arrow_style(arrow);
-    int_warn(NO_CARET,"arrowstyle %d not found", tag);
+    if (!this || this->tag != tag)
+	int_warn(NO_CARET,"arrowstyle %d not found", tag);
+
+    /* Restore orginal color if the style doesn't specify one */
+    if (arrow->lp_properties.pm3d_color.type == TC_DEFAULT)
+	arrow->lp_properties.pm3d_color = save_colorspec;
 }
 
 void
