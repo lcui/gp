@@ -192,6 +192,10 @@ static bool qt_setPosition = false;
 static bool qt_setSize   = true;
 static int  qt_setWidth  = qt_optionWidth;
 static int  qt_setHeight = qt_optionHeight;
+static bool qt_is_3Dplot = false;
+
+static double qt_max_pos_base = 0.0;
+static double qt_max_neg_base = 0.0;
 
 /* ------------------------------------------------------
  * Helpers
@@ -383,18 +387,18 @@ bool qt_processTermEvent(gp_event_t* event)
 		event->my = p.y();
 	}
 
+#ifdef _WIN32
 	if (event->type == GE_raise)
 	{
-#ifdef _WIN32
 # ifndef WGP_CONSOLE
 		SetForegroundWindow(textwin.hWndParent);
 # else
 		SetForegroundWindow(GetConsoleWindow());
 # endif
 		WinRaiseConsole();
-#endif
 		return true;
 	}
+#endif
 
 	// Send the event to gnuplot core
 	do_event(event);
@@ -598,6 +602,9 @@ void qt_text_wrapper()
 		qt->out << lower/qt_oversamplingF << scale/qt_oversamplingF;
 		qt->out << (axis_array[axis_order[i]].log ? axis_array[axis_order[i]].log_base : 0.);
 	}
+	// Flag whether this was a 3D plot (not mousable in 'persist' mode)
+	qt->out << qt_is_3Dplot;
+	qt_is_3Dplot = false;
 
 	qt_text();
 }
@@ -642,6 +649,12 @@ void qt_enhanced_open(char* fontname, double fontsize, double base, TBOOLEAN wid
 	qt->enhancedWidthFlag = widthflag;
 	qt->enhancedShowFlag  = showflag;
 	qt->enhancedOverprint = overprint;
+
+	// Baseline correction.  Surely Qt itself provides this somehow?
+	if (qt_max_pos_base < base)
+	    qt_max_pos_base = base;
+	if (qt_max_neg_base > base)
+	    qt_max_neg_base = base;
 
 	// strip Bold or Italic property out of font name
 	QString tempname = fontname;
@@ -691,6 +704,9 @@ void qt_put_text(unsigned int x, unsigned int y, const char* string)
 	enhanced_fontscale = 1.0;
 	strncpy(enhanced_escape_format, "%c", sizeof(enhanced_escape_format));
 
+	// Baseline correction
+	qt_max_pos_base = qt_max_neg_base = 0.0;
+
 	// Set the recursion going. We say to keep going until a closing brace, but
 	// we don't really expect to find one.  If the return value is not the nul-
 	// terminator of the string, that can only mean that we did find an unmatched
@@ -705,6 +721,10 @@ void qt_put_text(unsigned int x, unsigned int y, const char* string)
 			break; // end of string
 		// else carry on and process the rest of the string
 	}
+
+	// Baseline correction
+	y += qt_max_pos_base * 5;
+	y += qt_max_neg_base * 5;
 
 	qt->out << GEEnhancedFinish << qt_termCoord(x, y);
 }
@@ -998,8 +1018,12 @@ int qt_waitforinput(int options)
 		}
 
 		// Wait for input
-		if (select(socket_fd+1, &read_fds, NULL, NULL, timeout) < 0)
-		{
+		int n_changed_fds = select(socket_fd+1, &read_fds,
+						NULL,	// not watching for write-only
+						NULL,	// not watching for exceptions
+						timeout );
+
+		if (n_changed_fds < 0) {
 			// Display the error message except when Ctrl + C is pressed
 			if (errno != 4)
 				fprintf(stderr, "Qt terminal communication error: select() error %i %s\n", errno, strerror(errno));
@@ -1055,8 +1079,8 @@ int qt_waitforinput(int options)
 
 	if (options == TERM_ONLY_CHECK_MOUSING)
 		return '\0';
-	else
-		return getchar();
+
+	return getchar();
 
 #else // Windows console and wgnuplot
 #ifdef WGP_CONSOLE
@@ -1145,6 +1169,7 @@ int qt_waitforinput(int options)
 			// are received, only transmit the last one.
 			gp_event_t tempEvent;
 			tempEvent.type = -1;
+			int size = qt->socket.bytesAvailable();
 			while (qt->socket.bytesAvailable() >= (int)sizeof(gp_event_t)) {
 				struct gp_event_t event;
 				qt->socket.read((char*) &event, sizeof(gp_event_t));
@@ -1163,6 +1188,10 @@ int qt_waitforinput(int options)
 					}
 				}
 			}
+			// If the native pipe handle signalled new data, but the QtLocalSocket 
+			// object has no data available, release the CPU for a little while.
+			if (size == 0)
+				Sleep(100);
 			// Replay move event
 			if (tempEvent.type == GE_motion)
 				qt_processTermEvent(&tempEvent);
@@ -1515,6 +1544,8 @@ void qt_layer( t_termlayer syncpoint )
 		qt->out << GELayer << QTLAYER_END_KEYSAMPLE; break;
 	case TERM_LAYER_BEFORE_ZOOM:
 		qt->out << GELayer << QTLAYER_BEFORE_ZOOM; break;
+	case TERM_LAYER_3DPLOT:
+		qt_is_3Dplot = true; break;
     	default:
 		break;
     }

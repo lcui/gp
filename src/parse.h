@@ -1,5 +1,5 @@
 /*
- * $Id: parse.h,v 1.29.2.4 2016/10/18 18:56:52 sfeam Exp $
+ * $Id: parse.h,v 1.39 2017/04/19 06:20:45 sfeam Exp $
  */
 
 /* GNUPLOT - parse.h */
@@ -64,6 +64,9 @@ extern int at_highest_column_used;
 /* This is checked by df_readascii() */
 extern TBOOLEAN parse_1st_row_as_headers;
 
+/* This is used by df_open() and df_readascii() */
+extern udvt_entry *df_array;
+
 /* Protection mechanism for trying to parse a string followed by a + or - sign.
  * Also suppresses an undefined variable message if an unrecognized token
  * is encountered during try_to_get_string().
@@ -84,12 +87,14 @@ struct at_type * create_call_column_at __PROTO((char *));
 struct udvt_entry * add_udv __PROTO((int t_num));
 struct udft_entry * add_udf __PROTO((int t_num));
 void cleanup_udvlist __PROTO((void));
+int is_function __PROTO((int t_num));
 
 /* Code that uses the iteration routines here must provide */
 /* a blank iteration structure to use for bookkeeping.     */
 typedef struct iterator {
 	struct iterator *next;		/* linked list */
 	struct udvt_entry *iteration_udv;
+	t_value original_udv_value;	/* prior value of iteration variable */
 	char *iteration_string;
 	int iteration_start;
 	int iteration_end;
@@ -101,7 +106,7 @@ typedef struct iterator {
 } t_iterator;
 
 extern t_iterator * plot_iterator;	/* Used for plot and splot */
-extern t_iterator * set_iterator;		/* Used by set/unset commands */
+extern t_iterator * set_iterator;	/* Used by set/unset commands */
 
 /* These are used by the iteration code */
 t_iterator * check_for_iteration __PROTO((void));

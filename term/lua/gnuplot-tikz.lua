@@ -37,7 +37,7 @@
 
 
 
-  $Date: 2015/10/17 05:23:22 $
+  $Date: 2016/07/23 03:34:41 $
   $Author: sfeam $
   $Rev: 100 $
 
@@ -80,8 +80,8 @@ pgf.DEFAULT_FONT_V_CHAR = 308
 
 pgf.STYLE_FILE_BASENAME = "gnuplot-lua-tikz"  -- \usepackage{gnuplot-lua-tikz}
 
-pgf.REVISION = string.sub("$Rev: 100 $",7,-3)
-pgf.REVISION_DATE = string.gsub("$Date: 2015/10/17 05:23:22 $",
+pgf.REVISION = string.sub("$Rev: 102 $",7,-3)
+pgf.REVISION_DATE = string.gsub("$Date: 2016/07/23 03:34:41 $",
                                 "$Date: ([0-9]+).([0-9]+).([0-9]+) .*","%1/%2/%3")
 
 pgf.styles = {}
@@ -1333,7 +1333,8 @@ gfx.format.latex = {
   docheader        = "\\documentclass["..pgf.DEFAULT_FONT_SIZE.."pt]{article}\n"
                       .."\\usepackage[T1]{fontenc}\n"
                       .."\\usepackage{textcomp}\n\n"
-                      .."\\usepackage[utf8x]{inputenc}\n\n"
+                      .."\\usepackage[utf8x]{inputenc}\n"
+                      .."\\SetUnicodeOption{mathletters}\n\n"
                       .."\\usepackage{"..pgf.STYLE_FILE_BASENAME.."}\n"
                       .."\\pagestyle{empty}\n"
                       .."\\usepackage[active,tightpage]{preview}\n"
@@ -1753,8 +1754,9 @@ term.options = function(opt_str, initial, t_count)
       if s_end then
         o_next = string.sub(opt_str, s_start+1, s_end-1)
         if next_char == '"' then
-          -- Wow! this is to resolve all string escapes, kind of "unescape string"
-          o_next = assert(loadstring("return(\""..o_next.."\")"))()
+          -- this is to resolve all string escapes, kind of "unescape string"
+          -- lua 5.2 deprecated loadstring in favor of load
+          o_next = assert(load("return(\""..o_next.."\")"))()
         end
         o_type = "string"
       else
@@ -2301,7 +2303,10 @@ term.boxed_text = function(x, y, option)
       if (gfx.boxed_text_count > 0) then
 	 gp.write('\\node[')
 	 if (option == 'BACKGROUNDFILL') then
-	    gp.write('fill = gpbgfillcolor,')
+	    gp.write('fill={}, ')
+	    if gfx.opacity < 1.0 then
+		gp.write(string.format("opacity=%.2f, ", gfx.opacity))
+	    end
 	 else
 	    gfx.boxed_text = false
 	    gp.write('draw, gp path,')

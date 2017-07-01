@@ -1,5 +1,5 @@
 /*
- * $Id: datafile.h,v 1.49.2.2 2016/08/25 04:28:36 sfeam Exp $
+ * $Id: datafile.h,v 1.52 2016/08/19 16:51:58 sfeam Exp $
  */
 
 /* GNUPLOT - datafile.h */
@@ -139,6 +139,7 @@ extern char *df_key_title;
 int df_open __PROTO((const char *, int, struct curve_points *));
 int df_readline __PROTO((double [], int));
 void df_close __PROTO((void));
+void df_init __PROTO((void));
 char * df_fgets __PROTO((FILE *));
 void df_showdata __PROTO((void));
 int df_2dbinary __PROTO((struct curve_points *));

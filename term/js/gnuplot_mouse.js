@@ -1,7 +1,7 @@
 /*
- * $Id: gnuplot_mouse.js,v 1.22.2.3 2017/01/24 21:43:11 sfeam Exp $
+ * $Id: gnuplot_mouse.js,v 1.28 2017/02/17 21:27:53 sfeam Exp $
  */
-    gnuplot.mouse_version = " 24 January 2017";
+    gnuplot.mouse_version = " 17 February 2017";
 
 // Mousing code for use with gnuplot's 'canvas' terminal driver.
 // The functions defined here assume that the javascript plot produced by
@@ -335,8 +335,15 @@ gnuplot.convert_to_polar = function (x,y)
 	r = gnuplot.plot_axis_rmin - x/Math.cos(phi);
     else
         r = gnuplot.plot_axis_rmin + x/Math.cos(phi);
-    polar.ang = phi * 180./Math.PI;
+    phi = phi * (180./Math.PI);
+    if (gnuplot.polar_sense < 0)
+	phi = -phi;
+    if (gnuplot.polar_theta0 != undefined)
+	phi = phi + gnuplot.polar_theta0;
+    if (phi > 180.)
+	phi = phi - 360.;
     polar.r = r;
+    polar.ang = phi;
     return polar;
 }
 

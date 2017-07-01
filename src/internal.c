@@ -1,5 +1,5 @@
 #ifndef lint
-static char *RCSid() { return RCSid("$Id: internal.c,v 1.79.2.3 2016/06/14 21:36:00 sfeam Exp $"); }
+static char *RCSid() { return RCSid("$Id: internal.c,v 1.96 2017/04/22 04:44:52 sfeam Exp $"); }
 #endif
 
 /* GNUPLOT - internal.c */
@@ -47,7 +47,7 @@ static char *RCSid() { return RCSid("$Id: internal.c,v 1.79.2.3 2016/06/14 21:36
 
 #include <math.h>
 
-#ifndef _WIN64
+#if !defined(__MINGW64_VERSION_MAJOR)
 /*
  * FIXME: This is almost certainly out of date on linux, since the matherr
  * mechanism has been replaced by math_error() and supposedly is only 
@@ -72,8 +72,10 @@ GP_MATHERR( STRUCT_EXCEPTION_P_X )
 
 static enum DATA_TYPES sprintf_specifier __PROTO((const char *format));
 
-#define BAD_DEFAULT default: int_error(NO_CARET, "internal error : type neither INT or CMPLX"); return;
-#define BADINT_DEFAULT default: int_error(NO_CARET, "error: bit shift applied to non-INT"); return;
+#define BADINT_DEFAULT int_error(NO_CARET, "error: bit shift applied to non-INT");
+#define BAD_TYPE(type) int_error(NO_CARET, (type==NOTDEFINED) ? "uninitialized user variable" : "internal error : type neither INT nor CMPLX");
+	
+static const char *nonstring_error = "internal error : STRING operator applied to undefined or non-STRING variable";
 
 static int recursion_depth = 0;
 void
@@ -88,7 +90,7 @@ f_push(union argument *x)
     struct udvt_entry *udv;
 
     udv = x->udv_arg;
-    if (udv->udv_undef) {
+    if (udv->udv_value.type == NOTDEFINED) {
 	if (string_result_only)
 	/* We're only here to check whether this is a string. It isn't. */
 	    udv = udv_NaN;
@@ -116,7 +118,12 @@ f_pop(union argument *x)
 {
     struct value dummy;
     pop(&dummy);
-    gpfree_string(&dummy);
+    if (dummy.type == STRING)
+	gpfree_string(&dummy);
+#ifdef ARRAY_COPY_ON_REFERENCE
+    if (dummy.type == ARRAY)
+	gpfree_string(&dummy);
+#endif
 }
 
 void
@@ -155,6 +162,9 @@ f_call(union argument *x)
 
     save_dummy = udf->dummy_values[0];
     (void) pop(&(udf->dummy_values[0]));
+
+    if (udf->dummy_values[0].type == ARRAY)
+	int_error(NO_CARET, "f_call: unsupported array operation");
 
     if (udf->dummy_num != 1)
 	int_error(NO_CARET, "function %s requires %d variables", udf->udf_name, udf->dummy_num);
@@ -207,8 +217,11 @@ f_calln(union argument *x)
     }
 
     /* pop parameters we can use */
-    for (i = num_pop - 1; i >= 0; i--)
+    for (i = num_pop - 1; i >= 0; i--) {
 	(void) pop(&(udf->dummy_values[i]));
+	if (udf->dummy_values[i].type == ARRAY)
+	    int_error(NO_CARET, "f_calln: unsupported array operation");
+    }
 
     if (recursion_depth++ > STACK_DEPTH)
 	int_error(NO_CARET, "recursion depth limit exceeded");
@@ -246,7 +259,6 @@ f_sum(union argument *arg)
     udv = get_udv_by_name(varname.v.string_val);
     if (!udv)
         int_error(NO_CARET, "internal error: f_sum could not access iteration variable.");
-    udv->udv_undef = false;
 
     udf = arg->udf_arg;
     if (!udf)
@@ -376,7 +388,9 @@ f_uminus(union argument *arg)
 	a.v.cmplx_val.imag =
 	    -a.v.cmplx_val.imag;
 	break;
-	BAD_DEFAULT
+    default:
+	BAD_TYPE(a.type)
+	break;
     }
     push(&a);
 }
@@ -405,7 +419,8 @@ f_eq(union argument *arg)
 		      b.v.cmplx_val.real &&
 		      b.v.cmplx_val.imag == 0.0);
 	    break;
-	    BAD_DEFAULT
+	default:
+	    BAD_TYPE(b.type)
 	}
 	break;
     case CMPLX:
@@ -420,10 +435,12 @@ f_eq(union argument *arg)
 		      a.v.cmplx_val.imag ==
 		      b.v.cmplx_val.imag);
 	    break;
-	    BAD_DEFAULT
+	default:
+	    BAD_TYPE(b.type)
 	}
 	break;
-	BAD_DEFAULT
+    default:
+	BAD_TYPE(a.type)
     }
     push(Ginteger(&a, result));
 }
@@ -450,7 +467,8 @@ f_ne(union argument *arg)
 		      b.v.cmplx_val.real ||
 		      b.v.cmplx_val.imag != 0.0);
 	    break;
-	    BAD_DEFAULT
+	default:
+	    BAD_TYPE(b.type)
 	}
 	break;
     case CMPLX:
@@ -466,10 +484,12 @@ f_ne(union argument *arg)
 		      a.v.cmplx_val.imag !=
 		      b.v.cmplx_val.imag);
 	    break;
-	    BAD_DEFAULT
+	default:
+	    BAD_TYPE(b.type)
 	}
 	break;
-	BAD_DEFAULT
+    default:
+	BAD_TYPE(a.type)
     }
     push(Ginteger(&a, result));
 }
@@ -495,7 +515,8 @@ f_gt(union argument *arg)
 	    result = (a.v.int_val >
 		      b.v.cmplx_val.real);
 	    break;
-	    BAD_DEFAULT
+	default:
+	    BAD_TYPE(b.type)
 	}
 	break;
     case CMPLX:
@@ -508,10 +529,12 @@ f_gt(union argument *arg)
 	    result = (a.v.cmplx_val.real >
 		      b.v.cmplx_val.real);
 	    break;
-	    BAD_DEFAULT
+	default:
+	    BAD_TYPE(b.type)
 	}
 	break;
-	BAD_DEFAULT
+    default:
+	BAD_TYPE(a.type)
     }
     push(Ginteger(&a, result));
 }
@@ -537,7 +560,8 @@ f_lt(union argument *arg)
 	    result = (a.v.int_val <
 		      b.v.cmplx_val.real);
 	    break;
-	    BAD_DEFAULT
+	default:
+	    BAD_TYPE(b.type)
 	}
 	break;
     case CMPLX:
@@ -550,10 +574,12 @@ f_lt(union argument *arg)
 	    result = (a.v.cmplx_val.real <
 		      b.v.cmplx_val.real);
 	    break;
-	    BAD_DEFAULT
+	default:
+	    BAD_TYPE(b.type)
 	}
 	break;
-	BAD_DEFAULT
+    default:
+	BAD_TYPE(a.type)
     }
     push(Ginteger(&a, result));
 }
@@ -579,7 +605,8 @@ f_ge(union argument *arg)
 	    result = (a.v.int_val >=
 		      b.v.cmplx_val.real);
 	    break;
-	    BAD_DEFAULT
+	default:
+	    BAD_TYPE(b.type)
 	}
 	break;
     case CMPLX:
@@ -592,10 +619,12 @@ f_ge(union argument *arg)
 	    result = (a.v.cmplx_val.real >=
 		      b.v.cmplx_val.real);
 	    break;
-	    BAD_DEFAULT
+	default:
+	    BAD_TYPE(b.type)
 	}
 	break;
-	BAD_DEFAULT
+    default:
+	BAD_TYPE(a.type)
     }
     push(Ginteger(&a, result));
 }
@@ -621,7 +650,8 @@ f_le(union argument *arg)
 	    result = (a.v.int_val <=
 		      b.v.cmplx_val.real);
 	    break;
-	    BAD_DEFAULT
+	default:
+	    BAD_TYPE(b.type)
 	}
 	break;
     case CMPLX:
@@ -634,10 +664,12 @@ f_le(union argument *arg)
 	    result = (a.v.cmplx_val.real <=
 		      b.v.cmplx_val.real);
 	    break;
-	    BAD_DEFAULT
+	default:
+	    BAD_TYPE(b.type)
 	}
 	break;
-	BAD_DEFAULT
+    default:
+	BAD_TYPE(a.type)
     }
     push(Ginteger(&a, result));
 }
@@ -657,10 +689,12 @@ f_leftshift(union argument *arg)
 	case INTGR:
 	    (void) Ginteger(&result, (unsigned)(a.v.int_val) << b.v.int_val);
 	    break;
-	BADINT_DEFAULT
+	default:
+	    BADINT_DEFAULT
 	}
 	break;
-    BADINT_DEFAULT
+    default:
+	BADINT_DEFAULT
     }
     push(&result);
 }
@@ -681,10 +715,12 @@ f_rightshift(union argument *arg)
 	case INTGR:
 	    (void) Ginteger(&result, (unsigned)(a.v.int_val) >> b.v.int_val);
 	    break;
-	BADINT_DEFAULT
+	default:
+	    BADINT_DEFAULT
 	}
 	break;
-    BADINT_DEFAULT
+    default:
+	BADINT_DEFAULT
     }
     push(&result);
 }
@@ -711,7 +747,8 @@ f_plus(union argument *arg)
 			    b.v.cmplx_val.real,
 			    b.v.cmplx_val.imag);
 	    break;
-	    BAD_DEFAULT
+	default:
+	    BAD_TYPE(b.type)
 	}
 	break;
     case CMPLX:
@@ -727,10 +764,12 @@ f_plus(union argument *arg)
 			    a.v.cmplx_val.imag +
 			    b.v.cmplx_val.imag);
 	    break;
-	    BAD_DEFAULT
+	default:
+	    BAD_TYPE(b.type)
 	}
 	break;
-	BAD_DEFAULT
+    default:
+	BAD_TYPE(a.type)
     }
     push(&result);
 }
@@ -756,7 +795,8 @@ f_minus(union argument *arg)
 			    b.v.cmplx_val.real,
 			    -b.v.cmplx_val.imag);
 	    break;
-	    BAD_DEFAULT
+	default:
+	    BAD_TYPE(b.type)
 	}
 	break;
     case CMPLX:
@@ -772,10 +812,12 @@ f_minus(union argument *arg)
 			    a.v.cmplx_val.imag -
 			    b.v.cmplx_val.imag);
 	    break;
-	    BAD_DEFAULT
+	default:
+	    BAD_TYPE(b.type)
 	}
 	break;
-	BAD_DEFAULT
+    default:
+	BAD_TYPE(a.type)
     }
     push(&result);
 }
@@ -807,7 +849,8 @@ f_mult(union argument *arg)
 			    a.v.int_val *
 			    b.v.cmplx_val.imag);
 	    break;
-	    BAD_DEFAULT
+	default:
+	    BAD_TYPE(b.type)
 	}
 	break;
     case CMPLX:
@@ -828,10 +871,12 @@ f_mult(union argument *arg)
 			    a.v.cmplx_val.imag *
 			    b.v.cmplx_val.real);
 	    break;
-	    BAD_DEFAULT
+	default:
+	    BAD_TYPE(b.type)
 	}
 	break;
-	BAD_DEFAULT
+    default:
+	BAD_TYPE(a.type)
     }
     push(&result);
 }
@@ -874,7 +919,8 @@ f_div(union argument *arg)
 		undefined = TRUE;
 	    }
 	    break;
-	    BAD_DEFAULT
+	default:
+	    BAD_TYPE(b.type)
 	}
 	break;
     case CMPLX:
@@ -910,10 +956,12 @@ f_div(union argument *arg)
 		undefined = TRUE;
 	    }
 	    break;
-	    BAD_DEFAULT
+	default:
+	    BAD_TYPE(b.type)
 	}
 	break;
-	BAD_DEFAULT
+    default:
+	BAD_TYPE(a.type)
     }
     push(&result);
 }
@@ -995,7 +1043,8 @@ f_power(union argument *arg)
 				mag * sin(ang));
 	    }
 	    break;
-	    BAD_DEFAULT
+	default:
+	    BAD_TYPE(b.type)
 	}
 	break;
     case CMPLX:
@@ -1046,11 +1095,26 @@ f_power(union argument *arg)
 				mag * sin(ang));
 	    }
 	    break;
-	    BAD_DEFAULT
+	default:
+	    BAD_TYPE(b.type)
 	}
 	break;
-	BAD_DEFAULT
+    default:
+	BAD_TYPE(a.type)
     }
+
+    /* Catch underflow and return 0 */
+    /* Note: fpclassify() is an ISOC99 macro found also in other libc implementations */
+#ifdef fpclassify
+    if (errno == ERANGE && result.type == CMPLX) {
+	int fperror = fpclassify(result.v.cmplx_val.real);
+	if (fperror == FP_ZERO || fperror == FP_SUBNORMAL) {
+	    result.v.cmplx_val.real = 0.0;
+	    errno = 0;
+	}
+    }
+#endif
+
     push(&result);
 }
 
@@ -1106,7 +1170,7 @@ f_concatenate(union argument *arg)
     }
 
     if (a.type != STRING || b.type != STRING)
-	int_error(NO_CARET, "internal error : STRING operator applied to non-STRING type");
+	int_error(NO_CARET, nonstring_error);
 
     (void) Gstring(&result, gp_stradd(a.v.string_val, b.v.string_val));
     gpfree_string(&a);
@@ -1124,8 +1188,8 @@ f_eqs(union argument *arg)
     (void) pop(&b);
     (void) pop(&a);
 
-    if(a.type != STRING || b.type != STRING)
-	int_error(NO_CARET, "internal error : STRING operator applied to non-STRING type");
+    if (a.type != STRING || b.type != STRING)
+	int_error(NO_CARET, nonstring_error);
 
     (void) Ginteger(&result, !strcmp(a.v.string_val, b.v.string_val));
     gpfree_string(&a);
@@ -1142,8 +1206,8 @@ f_nes(union argument *arg)
     (void) pop(&b);
     (void) pop(&a);
 
-    if(a.type != STRING || b.type != STRING)
-	int_error(NO_CARET, "internal error : STRING operator applied to non-STRING type");
+    if (a.type != STRING || b.type != STRING)
+	int_error(NO_CARET, nonstring_error);
 
     (void) Ginteger(&result, (int)(strcmp(a.v.string_val, b.v.string_val)!=0));
     gpfree_string(&a);
@@ -1236,6 +1300,50 @@ f_range(union argument *arg)
 	push(Gstring(&substr, begp));
     }
     gpfree_string(&full);
+}
+
+
+/*
+ * f_index() extracts the value of a single element from an array.
+ */
+void
+f_index(union argument *arg)
+{
+    struct value array, index;
+    int i = -1;
+
+    (void) arg;			/* avoid -Wunused warning */
+    (void) pop(&index);
+    (void) pop(&array);
+
+    if (array.type != ARRAY)
+	int_error(NO_CARET, "internal error: attempt to index non-array variable");
+
+    if (index.type == INTGR)
+	i = index.v.int_val;
+    else if (index.type == CMPLX)
+	i = floor(index.v.cmplx_val.real);
+
+    if (i <= 0 || i > array.v.value_array[0].v.int_val) 
+	int_error(NO_CARET, "array index out of range");
+
+    push( &array.v.value_array[i] );
+}
+
+/*
+ * f_cardinality() extracts the number of elements in an array.
+ */
+void
+f_cardinality(union argument *arg)
+{
+    struct value array;
+    (void) arg;			/* avoid -Wunused warning */
+    (void) pop(&array);
+
+    if (array.type != ARRAY)
+	int_error(NO_CARET, "internal error: cardinality of a non-array variable");
+
+    push(Ginteger(&array, array.v.value_array[0].v.int_val));
 }
 
 /* Magic number! */
@@ -1492,14 +1600,6 @@ f_gprintf(union argument *arg)
     pop(&val);
     pop(&fmt);
 
-#ifdef DEBUG
-    fprintf(stderr,"----------\nGot gprintf parameters\nfmt: ");
-	disp_value(stderr, &fmt, TRUE);
-    fprintf(stderr,"\nval: ");
-	disp_value(stderr, &val, TRUE);
-    fprintf(stderr,"\n----------\n");
-#endif
-
     /* Make sure parameters are of the correct type */
     if (fmt.type != STRING)
 	int_error(NO_CARET,"First parameter to gprintf must be a format string");
@@ -1713,10 +1813,10 @@ f_system(union argument *arg)
     FPRINTF((stderr," f_system input = \"%s\"\n", val.v.string_val));
 
     ierr = do_system_func(val.v.string_val, &output);
-    fill_gpval_integer("GPVAL_ERRNO", ierr);
-    output_len = strlen(output);
+    fill_gpval_integer("GPVAL_ERRNO", ierr); 
 
     /* chomp result */
+    output_len = strlen(output);
     if ( output_len > 0 && output[output_len-1] == '\n' )
 	output[output_len-1] = NUL;
 
@@ -1733,25 +1833,41 @@ f_system(union argument *arg)
 void
 f_assign(union argument *arg)
 {
-    struct value a, b;
+    struct udvt_entry *udv;
+    struct value a, b, index;
     (void) arg;
     (void) pop(&b);	/* new value */
+    (void) pop(&index);	/* index (only used if this is an array assignment) */
     (void) pop(&a);	/* name of variable */
     
-    if (a.type == STRING) {
-	struct udvt_entry *udv;
-	if (!strncmp(a.v.string_val,"GPVAL_",6) || !strncmp(a.v.string_val,"MOUSE_",6))
-	    int_error(NO_CARET,"Attempt to assign to a read-only variable");
-	udv = add_udv_by_name(a.v.string_val);
-	gpfree_string(&a);
-	if (!udv->udv_undef)
-	    gpfree_string(&(udv->udv_value));
-	udv->udv_value = b;
-	udv->udv_undef = FALSE;
-	push(&b);
-    } else {
+    if (a.type != STRING)
 	int_error(NO_CARET, "attempt to assign to something other than a named variable");
+    if (!strncmp(a.v.string_val,"GPVAL_",6) || !strncmp(a.v.string_val,"MOUSE_",6))
+	int_error(NO_CARET, "attempt to assign to a read-only variable");
+    if (b.type == ARRAY)
+	int_error(NO_CARET, "unsupported array operation");
+
+    udv = add_udv_by_name(a.v.string_val);
+    gpfree_string(&a);
+
+    if (udv->udv_value.type == ARRAY) {
+	int i;
+	if (index.type == INTGR)
+	    i = index.v.int_val;
+	else if (index.type == CMPLX)
+	    i = floor(index.v.cmplx_val.real);
+	else
+	    int_error(NO_CARET, "non-numeric array index");
+	if (i <= 0 || i > udv->udv_value.v.value_array[0].v.int_val)
+	    int_error(NO_CARET, "array index out of range");
+	gpfree_string(&udv->udv_value.v.value_array[i]);
+	udv->udv_value.v.value_array[i] = b;
+    } else {
+	gpfree_string(&(udv->udv_value));
+	udv->udv_value = b;
     }
+
+    push(&b);
 }
 
 /*
@@ -1778,7 +1894,7 @@ f_value(union argument *arg)
     while (p) {
 	if (!strcmp(p->udv_name, a.v.string_val)) {
 	    result = p->udv_value;
-	    if (p->udv_undef)
+	    if (p->udv_value.type == NOTDEFINED)
 		p = NULL;
 	    else if (result.type == STRING)
 		result.v.string_val = gp_strdup(result.v.string_val);

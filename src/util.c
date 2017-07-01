@@ -1,5 +1,5 @@
 #ifndef lint
-static char *RCSid() { return RCSid("$Id: util.c,v 1.128.2.8 2017/01/28 06:53:52 sfeam Exp $"); }
+static char *RCSid() { return RCSid("$Id: util.c,v 1.147 2017/02/04 23:59:27 sfeam Exp $"); }
 #endif
 
 /* GNUPLOT - util.c */
@@ -42,19 +42,13 @@ static char *RCSid() { return RCSid("$Id: util.c,v 1.128.2.8 2017/01/28 06:53:52
 #include "internal.h"		/* for eval_reset_after_error */
 #include "misc.h"
 #include "plot.h"
-#include "term_api.h"		/* for term_end_plot() used by graph_error(), also to detect enhanced mode */
 #include "variable.h"		/* For locale handling */
 #include "setshow.h"		/* for conv_text() */
 #include "tabulate.h"		/* for table_mode */
 
-#if defined(HAVE_DIRENT_H)
+#if defined(HAVE_DIRENT_H) && !defined(_WIN32)
 # include <sys/types.h>
 # include <dirent.h>
-#elif defined(_Windows)
-# include <windows.h>
-#endif
-#if defined(__MSC__) || defined (__WATCOMC__)
-# include <io.h>
 #endif
 
 /* Exported (set-table) variables */
@@ -174,7 +168,7 @@ type_udv(int t_num)
 
     while (*udv_ptr) {
 	if (equals(t_num, (*udv_ptr)->udv_name)) {
-	    if ((*udv_ptr)->udv_undef)
+	    if ((*udv_ptr)->udv_value.type == NOTDEFINED)
 		return 0;
 	    else
 		return (*udv_ptr)->udv_value.type;
@@ -267,42 +261,6 @@ token_len(int t_num)
     return (size_t)(token[t_num].length);
 }
 
-#ifdef NEXT
-/*
- * quote_str() no longer has any callers in the core code.
- * However, it is called by the next/openstep terminal.
- */
-
-/*
- * quote_str() does the same thing as copy_str, except it ignores the
- *   quotes at both ends.  This seems redundant, but is done for
- *   efficency.
- */
-void
-quote_str(char *str, int t_num, int max)
-{
-    int i = 0;
-    int start = token[t_num].start_index + 1;
-    int count;
-
-    if ((count = token[t_num].length - 2) >= max) {
-	count = max - 1;
-	FPRINTF((stderr, "str buffer overflow in quote_str"));
-    }
-    if (count > 0) {
-	do {
-	    str[i++] = gp_input_line[start++];
-	} while (i != count);
-    }
-    str[i] = NUL;
-    /* convert \t and \nnn (octal) to char if in double quotes */
-    if (gp_input_line[token[t_num].start_index] == '"')
-	parse_esc(str);
-    else
-	parse_sq(str);
-}
-#endif
-
 /*
  * capture() copies into str[] the part of gp_input_line[] which lies between
  * the begining of token[start] and end of token[end].
@@ -367,9 +325,7 @@ m_quote_capture(char **str, int start, int end)
 }
 
 /*
- * Wrapper for isstring + m_quote_capture that can be used with
- * or without GP_STRING_VARS enabled.
- * EAM Aug 2004
+ * Wrapper for isstring + m_quote_capture or const_string_express
  */
 char *
 try_to_get_string()
@@ -1114,6 +1070,9 @@ print_line_with_error(int t_num)
     }
 }
 
+/*
+ * os_error() is just like int_error() except that it calls perror().
+ */
 #if defined(VA_START) && defined(STDC_HEADERS)
 void
 os_error(int t_num, const char *str,...)
@@ -1150,15 +1109,13 @@ os_error(int t_num, const char *str, va_dcl)
 #ifdef VMS
     status[1] = vaxc$errno;
     sys$putmsg(status);
-    (void) putc('\n', stderr);
 #else /* VMS */
-    perror("util.c");
-    putc('\n', stderr);
+    perror("system error");
 #endif /* VMS */
 
-    scanning_range_in_progress = FALSE;
-
-    bail_to_command_line();
+    putc('\n', stderr);
+    fill_gpval_string("GPVAL_ERRMSG", strerror(errno));
+    common_error_exit();
 }
 
 
@@ -1194,19 +1151,27 @@ int_error(int t_num, const char str[], va_dcl)
 #endif
 
     fputs("\n\n", stderr);
+    fill_gpval_string("GPVAL_ERRMSG", error_message);
+    common_error_exit();
+}
 
+
+void
+common_error_exit()
+{
     /* We are bailing out of nested context without ever reaching */
     /* the normal cleanup code. Reset any flags before bailing.   */
     df_reset_after_error();
     eval_reset_after_error();
     clause_reset_after_error();
     parse_reset_after_error();
+    set_iterator = cleanup_iteration(set_iterator);
+    plot_iterator = cleanup_iteration(plot_iterator);
     scanning_range_in_progress = FALSE;
     inside_zoom = FALSE;
 
     /* Load error state variables */
     update_gpval_variables(2);
-    fill_gpval_string("GPVAL_ERRMSG", error_message);
 
     bail_to_command_line();
 }
@@ -1240,51 +1205,6 @@ int_warn(int t_num, const char str[], va_dcl)
     fprintf(stderr, str, a1, a2, a3, a4, a5, a6, a7, a8);
 #endif /* VA_START */
     putc('\n', stderr);
-}
-
-/*{{{  graph_error() */
-/* handle errors during graph-plot in a consistent way */
-/* HBB 20000430: move here, from graphics.c */
-#if defined(VA_START) && defined(STDC_HEADERS)
-void
-graph_error(const char *fmt, ...)
-#else
-void
-graph_error(const char *fmt, va_dcl)
-#endif
-{
-#ifdef VA_START
-    va_list args;
-#endif
-
-    multiplot = FALSE;
-    term_end_plot();
-
-#ifdef VA_START
-    VA_START(args, fmt);
-    /* HBB 20001120: instead, copy the core code from int_error() to
-     * here: */
-    PRINT_SPACES_UNDER_PROMPT;
-    if (!interactive) {
-	if (lf_head && lf_head->name)
-	    fprintf(stderr, "\"%s\", line %d: ", lf_head->name, inline_num);
-	else fprintf(stderr, "line %d: ", inline_num);
-    }
-
-# if defined(HAVE_VFPRINTF) || _LIBC
-    vfprintf(stderr, fmt, args);
-# else
-    _doprnt(fmt, args, stderr);
-# endif
-    va_end(args);
-    fputs("\n\n", stderr);
-
-    bail_to_command_line();
-    va_end(args);
-#else
-    int_error(NO_CARET, fmt, a1, a2, a3, a4, a5, a6, a7, a8);
-#endif
-
 }
 
 /*}}} */
@@ -1391,25 +1311,15 @@ parse_esc(char *instr)
 /* FIXME HH 20020915: This function does nothing if dirent.h and windows.h
  * not available. */
 TBOOLEAN
-existdir (const char *name)
+existdir(const char *name)
 {
-#ifdef HAVE_DIRENT_H
+#if defined(HAVE_DIRENT_H ) || defined(_WIN32)
     DIR *dp;
-    if (! (dp = opendir(name) ) )
+    if ((dp = opendir(name)) == NULL)
 	return FALSE;
 
     closedir(dp);
     return TRUE;
-#elif defined(_Windows)
-    HANDLE FileHandle;
-    WIN32_FIND_DATA finddata;
-
-    FileHandle = FindFirstFile(name, &finddata);
-    if (FileHandle != INVALID_HANDLE_VALUE) {
-	if (finddata.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
-	    return TRUE;
-    }
-    return FALSE;
 #elif defined(VMS)
     return FALSE;
 #else
@@ -1540,11 +1450,35 @@ strlen_utf8(const char *s)
     return j;
 }
 
+
+TBOOLEAN
+is_sjis_lead_byte(char c)
+{
+    unsigned int ch = (unsigned char) c;
+    return ((ch >= 0x81) && (ch <= 0x9f)) || ((ch >= 0xe1) && (ch <= 0xee));
+}
+
+
+size_t
+strlen_sjis(const char *s)
+{
+    int i = 0, j = 0;
+    while (s[i]) {
+	if (is_sjis_lead_byte(s[i])) i++; /* skip */
+	j++;
+	i++;
+    }
+    return j;
+}
+
+
 size_t
 gp_strlen(const char *s)
 {
     if (encoding == S_ENC_UTF8)
 	return strlen_utf8(s);
+    else if (encoding == S_ENC_SJIS)
+	return strlen_sjis(s);
     else
 	return strlen(s);
 }
@@ -1683,6 +1617,16 @@ value_to_str(struct value *val, TBOOLEAN need_quotes)
 		nlines++;
 	}
 	sprintf(s[j], "<%d line data block>", nlines);
+	break;
+	}
+    case ARRAY:
+	{
+	sprintf(s[j], "<%d element array>", val->v.value_array->v.int_val);
+	break;
+	}
+    case NOTDEFINED:
+	{
+	sprintf(s[j], "<undefined>");
 	break;
 	}
     default:

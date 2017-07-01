@@ -1,5 +1,5 @@
 # Hello, emacs: this is a -*- Makefile -*-
-# $Id: Makefile,v 1.13 2014/08/18 03:49:06 sfeam Exp $
+# $Id: Makefile,v 1.17 2017/02/15 09:13:19 markisch Exp $
 #
 # GNUPLOT Makefile OpenWatcom 1.3 on Win32
 
@@ -33,6 +33,7 @@ HHC = "$(HHC_DIR)\hhc.exe"
 # OpenWatcom programs:
 WCL = wcl386
 WCC = wcc386
+WPP = wpp386
 WLD = wlink
 WRC = wrc
 
@@ -71,15 +72,18 @@ BINARYFILES=$(M)binary1 $(M)binary2 $(M)binary3
 # Defines
 
 CPPFLAGS =  -DHAVE_CONFIG_H -D_Windows -DHAVE_CONFIG_H -DUSE_MOUSE -DEAM_OBJECTS
+CPPFLAGS += -DVERSION_MAJOR="5.1" -DPATCHLEVEL="0"
+CPPFLAGS += -DUNICODE -D_UNICODE
 # library-dependent ones may have to be added, like:
 # -DHAVE_LIBPNG -DHAVE_LIBPDF 
+#CPPFLAGS += -DHAVE_GDIPLUS
 
 HELPFILE = wgnuplot.chm
 
 DEFAULT_TARGETS = $(BINARYFILES) $(HELPFILE)
 
 TARGETS_PLAIN=wgnuplot.exe wgnuplot.mnu
-EXTRA_CPPFLAGS_PLAIN = 
+EXTRA_CPPFLAGS_PLAIN = -DUSE_FAKEPIPES -DPIPES
 
 TARGETS_PIPES=wgnuplot_pipes.exe wgnuplot.mnu
 EXTRA_CPPFLAGS_PIPES = -DPIPES=1
@@ -92,6 +96,7 @@ ALL_TARGETS = $(DEFAULT_TARGETS) $(TARGETS_PLAIN) $(TARGETS_PIPES) $(TARGETS_CON
 DEFAULT_TARGETS += $(TARGETS_$(VARIANT))
 
 LDLIBS += LIBRARY htmlhelp.lib
+#LDLIBS += LIBRARY gdiplus.lib
 
 # compiler flags, determined from MS ones by OW's "cl /showwopts"
 
@@ -113,6 +118,7 @@ LDLIBS += LIBRARY htmlhelp.lib
 # -aa : allow non-const initializers for locals
 # -d2 : debug information
 WCFLAGS = -zlf -ei -zq -I$(S);$(W) -zm -bm -5r -sg -orilt -j -aa -d2 $(CPPFLAGS) $(OPTS)
+WPPFLAGS = -zlf -ei -zq -I$(S);$(W) -zm -bm -5r -sg -orilt -j -d2 $(CPPFLAGS) $(OPTS)
 # removed: -za99
 
 # ...and here.
@@ -129,6 +135,7 @@ all: $(ALL_TARGETS) .SYMBOLIC
 
 WINOBJS = winmain.$(O) wgnuplib.$(O) wgraph.$(O) wprinter.$(O) wtext.$(O) &
         wpause.$(O) wmenu.$(O) gpexecute.$(O) screenbuf.$(O)
+#WINOBJS += wgdiplus.$(O)
 
 OBJS = $(COREOBJS) version.$(O) $(WINOBJS)
 
@@ -145,16 +152,26 @@ WIN_EXTRA_INPUTS = wgnuplot.res
 .EXTENSIONS: .exe .cobj .pobj .obj .asm .pas .c .cpp .for
 
 .c: $(S);$(W)
+.cpp: $(S);$(W)
 
 # default rule
 .c.obj: .AUTODEPEND
-        $(WCC) $(WCFLAGS) $[@
+	$(WCC) $(EXTRA_CPPFLAGS_PLAIN) $(WCFLAGS) $[@
 
 .c.cobj: .AUTODEPEND
-		$(WCC) $(EXTRA_CPPFLAGS_CONSOLE) $(WCFLAGS) $[@ -fo=$^@
+	$(WCC) $(EXTRA_CPPFLAGS_CONSOLE) $(WCFLAGS) $[@ -fo=$^@
 
 .c.pobj: .AUTODEPEND
-		$(WCC) $(EXTRA_CPPFLAGS_PIPES) $(WCFLAGS) $[@ -fo=$^@
+	$(WCC) $(EXTRA_CPPFLAGS_PIPES) $(WCFLAGS) $[@ -fo=$^@
+
+.cpp.obj: .AUTODEPEND
+	$(WPP) $(EXTRA_CPPFLAGS_PLAIN) $(WPPFLAGS) $[@
+
+.cpp.cobj: .AUTODEPEND
+	$(WPP) $(EXTRA_CPPFLAGS_CONSOLE) $(WPPFLAGS) $[@ -fo=$^@
+
+.cpp.pobj: .AUTODEPEND
+	$(WPP) $(EXTRA_CPPFLAGS_PIPES) $(WPPFLAGS) $[@ -fo=$^@
 
 # file-specific rules
 wgnuplot.exe: $(OBJS) $(WIN_EXTRA_INPUTS)
@@ -169,6 +186,7 @@ FILE {
 LIBRARY kernel32.lib,user32.lib,gdi32.lib,winspool.lib,comdlg32.lib
 LIBRARY comctl32.lib,advapi32.lib,shell32.lib
 LIBRARY msimg32.lib
+LIBRARY shlwapi.lib
 OPTION map
 OPTION SYMFILE
 NAME $^&
@@ -191,6 +209,7 @@ FILE {
 LIBRARY kernel32.lib,user32.lib,gdi32.lib,winspool.lib,comdlg32.lib
 LIBRARY advapi32.lib,shell32.lib
 LIBRARY msimg32.lib
+LIBRARY shlwapi.lib
 OPTION map
 OPTION SYMFILE
 NAME $^&
@@ -213,6 +232,7 @@ FILE {
 LIBRARY kernel32.lib,user32.lib,gdi32.lib,winspool.lib,comdlg32.lib
 LIBRARY advapi32.lib,shell32.lib
 LIBRARY msimg32.lib
+LIBRARY shlwapi.lib
 OPTION map
 OPTION SYMFILE
 NAME gnuplot.exe

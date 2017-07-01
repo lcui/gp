@@ -1,5 +1,5 @@
 #ifndef lint
-static char *RCSid() { return RCSid("$Id: multiplot.c,v 1.2.2.1 2015/03/04 04:23:15 sfeam Exp $"); }
+static char *RCSid() { return RCSid("$Id: multiplot.c,v 1.6 2016/09/14 18:37:38 sfeam Exp $"); }
 #endif
 
 /* GNUPLOT - term.c */
@@ -236,6 +236,7 @@ multiplot_start()
     mp_layout.title.text = NULL;
     free(mp_layout.title.font);
     mp_layout.title.font = NULL;
+    mp_layout.title.boxed = 0;
 
     /* Parse options */
     while (!END_OF_COMMAND) {
@@ -260,6 +261,12 @@ multiplot_start()
 
         if (almost_equals(c_token,"noenh$anced")) {
             mp_layout.title.noenhanced = TRUE;
+            c_token++;
+            continue;
+        }
+        
+	if (equals(c_token,"boxed")) {
+            mp_layout.title.boxed = 1;
             c_token++;
             continue;
         }
@@ -415,15 +422,12 @@ multiplot_start()
 		mp_layout.auto_layout_margins = TRUE;
 	    else
 		int_error(NO_CARET, "must give positive margin and spacing values");
-	} else if (set_spacing) {
-	    int_warn(NO_CARET, "must give margins and spacing, continue with auto margins.");
 	} else if (set_margins) {
 	    mp_layout.auto_layout_margins = TRUE;
 	    mp_layout.xspacing.scalex = screen;
 	    mp_layout.xspacing.x = 0.05;
 	    mp_layout.yspacing.scalex = screen;
 	    mp_layout.yspacing.x = 0.05;
-	    int_warn(NO_CARET, "must give margins and spacing, continue with spacing of 0.05");
 	}
 	/* Sanity check that screen tmargin is > screen bmargin */
 	if (mp_layout.bmargin.scalex == screen && mp_layout.tmargin.scalex == screen)
@@ -445,20 +449,14 @@ multiplot_start()
 
     /* Place overall title before doing anything else */
     if (mp_layout.title.text) {
-	double tmpx, tmpy;
 	unsigned int x, y;
 	char *p = mp_layout.title.text;
 
-	map_position_r(&(mp_layout.title.offset), &tmpx, &tmpy, "mp title");
-	x = term->xmax  / 2 + tmpx;
-	y = term->ymax - term->v_char + tmpy;;
+	x = term->xmax  / 2;
+	y = term->ymax - term->v_char;
 
-	ignore_enhanced(mp_layout.title.noenhanced);
-	apply_pm3dcolor(&(mp_layout.title.textcolor), term);
-	write_multiline(x, y, mp_layout.title.text,
-			CENTRE, JUST_TOP, 0, mp_layout.title.font);
-	reset_textcolor(&(mp_layout.title.textcolor), term);
-	ignore_enhanced(FALSE);
+	write_label(x, y, &(mp_layout.title));
+	reset_textcolor(&(mp_layout.title.textcolor));
 
 	/* Calculate fractional height of title compared to entire page */
 	/* If it would fill the whole page, forget it! */

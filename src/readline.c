@@ -1,5 +1,5 @@
 #ifndef lint
-static char *RCSid() { return RCSid("$Id: readline.c,v 1.62.2.4 2016/08/23 00:23:34 sfeam Exp $"); }
+static char *RCSid() { return RCSid("$Id: readline.c,v 1.77 2017/05/20 16:43:19 markisch Exp $"); }
 #endif
 
 /* GNUPLOT - readline.c */
@@ -61,18 +61,13 @@ static char *RCSid() { return RCSid("$Id: readline.c,v 1.62.2.4 2016/08/23 00:23
 #ifdef HAVE_WCHAR_H
 #include <wchar.h>
 #endif
+#ifdef WGP_CONSOLE
+#include "win/winmain.h"
+#endif
 
 #if defined(HAVE_LIBREADLINE) || defined(HAVE_LIBEDITLINE)
-#if defined(HAVE_LIBEDITLINE)
 int
-#else
-static int
-#endif
-#if defined(HAVE_LIBEDITLINE)
-getc_wrapper(FILE* fp /* is NULL, supplied by libedit */)
-#else
-getc_wrapper(FILE* fp /* should be stdin, supplied by readline */)
-#endif
+getc_wrapper(FILE* fp)
 {
     int c;
 
@@ -84,30 +79,23 @@ getc_wrapper(FILE* fp /* should be stdin, supplied by readline */)
 	}
 	else
 #endif
+#if defined(WGP_CONSOLE)
+	    c = ConsoleGetch();
+#else
 	if (fp)
 	    c = getc(fp);
 	else
 	    c = getchar(); /* HAVE_LIBEDITLINE */
 	if (c == EOF && errno == EINTR)
 	    continue;
+#endif
 	return c;
     }
 }
 #endif /* HAVE_LIBREADLINE || HAVE_LIBEDITLINE */
 
-#if defined(HAVE_LIBREADLINE) || defined(HAVE_LIBEDITLINE) || defined(READLINE)
-char*
-readline_ipc(const char* prompt)
-{
-#if defined(PIPE_IPC) && defined(HAVE_LIBREADLINE)
-    rl_getc_function = getc_wrapper;
-#endif
-    return readline((const char*) prompt);
-}
-#endif  /* HAVE_LIBREADLINE || HAVE_LIBEDITLINE || READLINE */
 
-
-#if defined(READLINE) && !(defined(HAVE_LIBREADLINE) || defined(HAVE_LIBEDITLINE))
+#ifdef READLINE
 
 /* This is a small portable version of GNU's readline that does not require
  * any terminal capabilities except backspace and space overwrites a character.
@@ -127,11 +115,14 @@ readline_ipc(const char* prompt)
  * ^N moves forward through history
  * ^H deletes the previous character
  * ^D deletes the current character, or EOF if line is empty
- * ^L/^R redraw line in case it gets trashed
+ * ^L redraw line in case it gets trashed
  * ^U kills the entire line
  * ^W deletes previous full or partial word
+ * ^V disables interpretation of the following key
  * LF and CR return the entire line regardless of the cursor postition
  * DEL deletes previous or current character (configuration dependent)
+ * TAB will perform filename completion
+ * ^R start a backward-search of the history
  * EOF with an empty line returns (char *)NULL
  *
  * all other characters are ignored
@@ -151,7 +142,7 @@ readline_ipc(const char* prompt)
 # endif
 #endif /* not HAVE_TERMIOS_H && HAVE_TCGETATTR */
 
-#if !defined(MSDOS) && !defined(_Windows)
+#if !defined(MSDOS) && !defined(_WIN32)
 
 /*
  * Set up structures using the proper include file
@@ -239,23 +230,28 @@ static int term_set = 0;	/* =1 if rl_termio set */
 static int ansi_getc __PROTO((void));
 #define DEL_ERASES_CURRENT_CHAR
 
-#else /* MSDOS or _Windows */
+#else /* MSDOS or _WIN32 */
 
-# ifdef _Windows
+# ifdef _WIN32
 #  include <windows.h>
-#  include "win/wtext.h"
 #  include "win/winmain.h"
+#  include "win/wcommon.h"
 #  define TEXTUSER 0xf1
 #  define TEXTGNUPLOT 0xf0
 #  ifdef WGP_CONSOLE
 #   define special_getc() win_getch()
 static int win_getch(void);
 #  else
+    /* The wgnuplot text window will suppress intermediate
+       screen updates in 'suspend' mode and only redraw the 
+       input line after 'resume'. */
+#   define SUSPENDOUTPUT TextSuspend(&textwin)
+#   define RESUMEOUTPUT TextResume(&textwin)
 #   define special_getc() msdos_getch()
-#  endif /* WGP_CONSOLE */
 static int msdos_getch(void);
+#  endif /* WGP_CONSOLE */
 #  define DEL_ERASES_CURRENT_CHAR
-# endif				/* _Windows */
+# endif				/* _WIN32 */
 
 # if defined(MSDOS)
 /* MSDOS specific stuff */
@@ -270,7 +266,7 @@ static int msdos_getch();
 #  define DEL_ERASES_CURRENT_CHAR
 # endif				/* MSDOS */
 
-#endif /* MSDOS or _Windows */
+#endif /* MSDOS or _WIN32 */
 
 #ifdef OS2
 # if defined( special_getc )
@@ -291,10 +287,21 @@ static int os2_getch(void);
 
 #define MAX_COMPLETIONS 50
 
+#ifndef SUSPENDOUTPUT
+#define SUSPENDOUTPUT
+#define RESUMEOUTPUT
+#endif
+
 static char *cur_line;		/* current contents of the line */
 static size_t line_len = 0;
 static size_t cur_pos = 0;	/* current position of the cursor */
 static size_t max_pos = 0;	/* maximum character position */
+
+static TBOOLEAN search_mode = FALSE;
+static const char search_prompt[] = "search '";
+static const char search_prompt2[] = "': ";
+static struct hist * search_result = NULL;
+static int search_result_width = 0;	/* on-screen width of the search result */
 
 static void fix_line __PROTO((void));
 static void redraw_line __PROTO((const char *prompt));
@@ -312,10 +319,18 @@ static void step_forward __PROTO((void));
 static void delete_forward __PROTO((void));
 static void delete_backward __PROTO((void));
 static int char_seqlen __PROTO((void));
-#if defined(HAVE_DIRENT_H) || defined(WIN32)
+#if defined(HAVE_DIRENT_H) || defined(_WIN32)
 static char *fn_completion(size_t anchor_pos, int direction);
 static void tab_completion(TBOOLEAN forward);
 #endif
+static void switch_prompt(const char * old_prompt, const char * new_prompt);
+static int do_search(int dir);
+static void print_search_result(const struct hist * result);
+
+#ifndef _WIN32
+static int mbwidth(char *c);
+#endif
+static int strwidth(const char * str);
 
 /* user_putc and user_puts should be used in the place of
  * fputc(ch,stderr) and fputs(str,stderr) for all output
@@ -326,16 +341,12 @@ static int
 user_putc(int ch)
 {
     int rv;
-#ifdef _Windows
-#ifndef WGP_CONSOLE
+#if defined(_WIN32) && !defined(WGP_CONSOLE)
     TextAttr(&textwin, TEXTUSER);
 #endif
-#endif
     rv = fputc(ch, stderr);
-#ifdef _Windows
-#ifndef WGP_CONSOLE
+#if defined(_WIN32) && !defined(WGP_CONSOLE)
     TextAttr(&textwin, TEXTGNUPLOT);
-#endif
 #endif
     return rv;
 }
@@ -344,21 +355,18 @@ static int
 user_puts(char *str)
 {
     int rv;
-#ifdef _Windows
-#ifndef WGP_CONSOLE
+#if defined(_WIN32) && !defined(WGP_CONSOLE)
     TextAttr(&textwin, TEXTUSER);
 #endif
-#endif
     rv = fputs(str, stderr);
-#ifdef _Windows
-#ifndef WGP_CONSOLE
+#if defined(_WIN32) && !defined(WGP_CONSOLE)
     TextAttr(&textwin, TEXTGNUPLOT);
-#endif
 #endif
     return rv;
 }
 
 
+#if !defined(_WIN32)
 /* EAM FIXME
  * This test is intended to determine if the current character, of which
  * we have only seen the first byte so far, will require twice the width
@@ -382,18 +390,61 @@ mbwidth(char *c)
 	return ((unsigned char)(*c) >= 0xe3 ? 2 : 1);
 #endif
     }
+
+    case S_ENC_SJIS: {
+	/* Assume all double-byte characters have double-width. */
+	return is_sjis_lead_byte(*c) ? 2 : 1;
+    }
+
     default:
-        return 1;
+	return 1;
     }
 }
+#endif
 
+static int
+strwidth(const char * str)
+{
+#if !defined(_WIN32)
+    int width = 0;
+    int i = 0;
+
+    switch (encoding) {
+    case S_ENC_UTF8: {
+	char ch = str[i];
+	if ((ch & 0xE0) == 0xC0) {
+	    i += 1;
+	} else if ((ch & 0xF0) == 0xE0) {
+	    i += 2;
+	} else if ((ch & 0xF8) == 0xF0) {
+	    i += 3;
+	}
+	width += mbwidth(&ch);
+    }
+    case S_ENC_SJIS:
+	/* Assume all double-byte characters have double-width. */
+	width = gp_strlen(str);
+	break;
+    default:
+	width = strlen(str);
+    }
+    return width;
+#else
+    /* double width characters are handled in the backend */
+    return gp_strlen(str);
+#endif
+}
 
 static int
 isdoublewidth(size_t pos)
 {
+#if defined(_WIN32)
+    /* double width characters are handled in the backend */
+    return FALSE;
+#else
     return mbwidth(cur_line + pos) > 1;
+#endif
 }
-
 
 /*
  * Determine length of multi-byte sequence starting at current position
@@ -401,31 +452,36 @@ isdoublewidth(size_t pos)
 static int
 char_seqlen()
 {
-    int i;
+    switch (encoding) {
 
-    if (S_ENC_UTF8 == encoding) {
-	i = cur_pos;
+    case S_ENC_UTF8: {
+	int i = cur_pos;
 	do {i++;}
 	while (((cur_line[i] & 0xc0) != 0xc0)
 	       && ((cur_line[i] & 0x80) != 0)
 	       && (i < max_pos));
 	return (i - cur_pos);
-    } else {
+    }
+
+    case S_ENC_SJIS:
+	return is_sjis_lead_byte(cur_line[cur_pos]) ? 2 : 1;
+
+    default:
 	return 1;
     }
 }
 
 /*
- * Back up over one multi-byte UTF-8 character sequence immediately preceding
+ * Back up over one multi-byte character sequence immediately preceding
  * the current position.  Non-destructive.  Affects both cur_pos and screen cursor.
  */
 static int
 backspace()
 {
-    int seqlen;
+    switch (encoding) {
 
-    if (S_ENC_UTF8 == encoding) {
-	seqlen = 0;
+    case S_ENC_UTF8: {
+	int seqlen = 0;
 	do {
 	    cur_pos--;
 	    seqlen++;
@@ -441,7 +497,27 @@ backspace()
 	if (isdoublewidth(cur_pos))
 	    user_putc(BACKSPACE);
 	return seqlen;
-    } else {
+    }
+
+    case S_ENC_SJIS: {
+	/* With S-JIS you cannot always determine if a byte is a single byte or part
+	   of a double-byte sequence by looking of an arbitrary byte in a string.
+	   Always test from the start of the string instead.
+	*/
+	int i;
+        int seqlen = 1;
+
+	for (i = 0; i < cur_pos; i += seqlen) {
+	    seqlen = is_sjis_lead_byte(cur_line[i]) ? 2 : 1;
+	}
+	cur_pos -= seqlen;
+	user_putc(BACKSPACE);
+	if (isdoublewidth(cur_pos))
+	    user_putc(BACKSPACE);
+	return seqlen;
+    }
+
+    default:
 	cur_pos--;
 	user_putc(BACKSPACE);
 	return 1;
@@ -461,8 +537,9 @@ step_forward()
     switch (encoding) {
 
     case S_ENC_UTF8:
+    case S_ENC_SJIS:
 	seqlen = char_seqlen();
-	for (i=0; i<seqlen; i++)
+	for (i = 0; i < seqlen; i++)
 	    user_putc(cur_line[cur_pos++]);
 	break;
 
@@ -511,8 +588,8 @@ extend_cur_line()
 {
     char *new_line;
 
-    /* extent input line length */
-    new_line = gp_realloc(cur_line, line_len + MAXBUF, NULL);
+    /* extend input line length */
+    new_line = (char *) gp_realloc(cur_line, line_len + MAXBUF, NULL);
     if (!new_line) {
 	reset_termio();
 	int_error(NO_CARET, "Can't extend readline length");
@@ -523,7 +600,7 @@ extend_cur_line()
 }
 
 
-#if defined(HAVE_DIRENT_H) || defined(WIN32)
+#if defined(HAVE_DIRENT_H) || defined(_WIN32)
 static char *
 fn_completion(size_t anchor_pos, int direction)
 {
@@ -571,6 +648,8 @@ fn_completion(size_t anchor_pos, int direction)
 		    }
 		}
 	    }
+	    if (start < cur_line)
+		start = cur_line;
 
 	    path = strndup(start, cur_line - start + anchor_pos);
 	    gp_expand_tilde(&path);
@@ -673,6 +752,7 @@ tab_completion(TBOOLEAN forward)
 	while (max_pos + completion_len - last_completion_len + 1 > line_len)
 	    extend_cur_line();
 
+    SUSPENDOUTPUT;
     /* erase from last_tab_pos to eol */
     while (cur_pos > last_tab_pos)
 	backspace();
@@ -701,13 +781,14 @@ tab_completion(TBOOLEAN forward)
 	user_putc(cur_line[last_tab_pos+i]);
     cur_pos += completion_len;
     fix_line();
+    RESUMEOUTPUT;
 
     /* remember this completion */
     last_tab_pos  = cur_pos - completion_len;
     last_completion_len = completion_len;
 }
 
-#endif /* HAVE_DIRENT_H || WIN32 */
+#endif /* HAVE_DIRENT_H || _WIN32 */
 
 
 char *
@@ -715,14 +796,15 @@ readline(const char *prompt)
 {
     int cur_char;
     char *new_line;
-
+    TBOOLEAN next_verbatim = FALSE;
+    char *prev_line;
 
     /* start with a string of MAXBUF chars */
     if (line_len != 0) {
 	free(cur_line);
 	line_len = 0;
     }
-    cur_line = gp_alloc(MAXBUF, "readline");
+    cur_line = (char *) gp_alloc(MAXBUF, "readline");
     line_len = MAXBUF;
 
     /* set the termio so we can do our own input processing */
@@ -733,7 +815,12 @@ readline(const char *prompt)
     cur_line[0] = '\0';
     cur_pos = 0;
     max_pos = 0;
-    cur_entry = NULL;
+
+    /* move to end of history */
+    while (next_history());
+
+    /* init global variables */
+    search_mode = FALSE;
 
     /* get characters */
     for (;;) {
@@ -743,10 +830,11 @@ readline(const char *prompt)
 	/* Accumulate ascii (7bit) printable characters
 	 * and all leading 8bit characters.
 	 */
-	if ((isprint(cur_char)
-	     || (((cur_char & 0x80) != 0) && (cur_char != EOF)))
-	    && (cur_char != '\t') /* TAB is a printable character in some locales */
-	   ) {
+	if (((isprint(cur_char)
+	      || (((cur_char & 0x80) != 0) && (cur_char != EOF))
+	     ) && (cur_char != '\t')) /* TAB is a printable character in some locales */
+	    || next_verbatim
+	    ) {
 	    size_t i;
 
 	    if (max_pos + 1 >= line_len) {
@@ -765,23 +853,75 @@ readline(const char *prompt)
 	    if (cur_pos < max_pos) {
 		switch (encoding) {
 		case S_ENC_UTF8:
-		    if ((cur_char & 0xc0) == 0)
+		    if ((cur_char & 0xc0) == 0) {
+			next_verbatim = FALSE;
 			fix_line(); /* Normal ascii character */
-		    else if ((cur_char & 0xc0) == 0xc0)
+		    } else if ((cur_char & 0xc0) == 0xc0) {
 			; /* start of a multibyte sequence. */
-		    else if (((cur_char & 0xc0) == 0x80) &&
-			 ((unsigned char)(cur_line[cur_pos-2]) >= 0xe0))
+		    } else if (((cur_char & 0xc0) == 0x80) &&
+			 ((unsigned char)(cur_line[cur_pos-2]) >= 0xe0)) {
 			; /* second byte of a >2 byte sequence */
-		    else {
+		    } else {
 			/* Last char of multi-byte sequence */
+			next_verbatim = FALSE;
 			fix_line();
 		    }
 		    break;
+
+		case S_ENC_SJIS: {
+		    /* S-JIS requires a state variable */
+		    static int mbwait = 0;
+
+		    if (mbwait == 0) {
+		        if (!is_sjis_lead_byte(cur_char)) {
+			    /* single-byte character */
+			    next_verbatim = FALSE;
+			    fix_line();
+			} else {
+			    /* first byte of a double-byte sequence */
+			    ;
+			}
+		    } else {
+			/* second byte of a double-byte sequence */
+			mbwait = 0;
+			next_verbatim = FALSE;
+			fix_line();
+		    }
+		}
+
 		default:
+		    next_verbatim = FALSE;
 		    fix_line();
 		    break;
 		}
+	    } else {
+		static int mbwait = 0;
+
+		next_verbatim = FALSE;
+		if (search_mode) {
+		    /* Only update the search at the end of a multi-byte sequence. */
+		    if (mbwait == 0) {
+			if (encoding == S_ENC_SJIS)
+			    mbwait = is_sjis_lead_byte(cur_char) ? 1 : 0;
+			if (encoding == S_ENC_UTF8) {
+			    char ch = cur_char;
+			    if (ch & 0x80)
+				while ((ch = (ch << 1)) & 0x80)
+				    mbwait++;
+			}
+		    } else {
+			mbwait--;
+		    }
+		    if (!mbwait)
+			do_search(-1);
+		}
 	    }
+
+	/* ignore special characters in search_mode */
+	} else if (!search_mode) {
+
+	if (0) {
+	    ;
 
 	/* else interpret unix terminal driver characters */
 #ifdef VERASE
@@ -805,9 +945,11 @@ readline(const char *prompt)
 	    delete_previous_word();
 #endif /* VWERASE */
 #ifdef VREPRINT
+#if 0 /* conflict with reverse-search */
 	} else if (cur_char == term_chars[VREPRINT]) {	/* ^R? */
 	    putc(NEWLINE, stderr);	/* go to a fresh line */
 	    redraw_line(prompt);
+#endif
 #endif /* VREPRINT */
 #ifdef VSUSP
 	} else if (cur_char == term_chars[VSUSP]) {
@@ -846,7 +988,7 @@ readline(const char *prompt)
 		    step_forward();
 		}
 		break;
-#if defined(HAVE_DIRENT_H) || defined(WIN32)
+#if defined(HAVE_DIRENT_H) || defined(_WIN32)
 	    case 011:		/* ^I / TAB */
 		tab_completion(TRUE); /* next tab completion */
 		break;
@@ -859,30 +1001,29 @@ readline(const char *prompt)
 		max_pos = cur_pos;
 		break;
 	    case 020:		/* ^P */
-		if (history != NULL) {
-		    if (cur_entry == NULL) {
-			cur_entry = history;
-			clear_line(prompt);
-			copy_line(cur_entry->line);
-		    } else if (cur_entry->prev != NULL) {
-			cur_entry = cur_entry->prev;
-			clear_line(prompt);
-			copy_line(cur_entry->line);
-		    }
+		if (previous_history() != NULL) {
+		    clear_line(prompt);
+		    copy_line(current_history()->line);
 		}
 		break;
 	    case 016:		/* ^N */
-		if (cur_entry != NULL) {
-		    cur_entry = cur_entry->next;
-		    clear_line(prompt);
-		    if (cur_entry != NULL)
-			copy_line(cur_entry->line);
-		    else
-			cur_pos = max_pos = 0;
+		clear_line(prompt);
+		if (next_history() != NULL) {
+		    copy_line(current_history()->line);
+		} else {
+		    cur_pos = max_pos = 0;
 		}
 		break;
-	    case 014:		/* ^L */
 	    case 022:		/* ^R */
+		prev_line = strdup(cur_line);
+		switch_prompt(prompt, search_prompt);
+		while (next_history()); /* seek to end of history */
+		search_result = NULL;
+		search_result_width = 0;
+		search_mode = TRUE;
+		print_search_result(NULL);
+		break;
+	    case 014:		/* ^L */
 		putc(NEWLINE, stderr);	/* go to a fresh line */
 		redraw_line(prompt);
 		break;
@@ -894,9 +1035,10 @@ readline(const char *prompt)
 		delete_backward();
 		break;
 	    case 004:		/* ^D */
-		if (max_pos == 0) {
+		/* Also catch asynchronous termination signal on Windows */
+		if (max_pos == 0 && terminate_flag) {
 		    reset_termio();
-		    return ((char *) NULL);
+		    return NULL;
 		}
 		/* intentionally omitting break */
 #ifdef DEL_ERASES_CURRENT_CHAR
@@ -907,6 +1049,9 @@ readline(const char *prompt)
 		break;
 	    case 025:		/* ^U */
 		clear_line(prompt);
+		break;
+	    case 026:		/* ^V */
+		next_verbatim = TRUE;
 		break;
 	    case 027:		/* ^W */
 		delete_previous_word();
@@ -939,9 +1084,135 @@ readline(const char *prompt)
 	    default:
 		break;
 	    }
+	} 
+
+	} else {  /* search-mode */
+#ifdef VERASE
+	    if (cur_char == term_chars[VERASE]) {	/* ^H */
+		delete_backward();
+		do_search(-1);
+	    } else 
+#endif /* VERASE */
+	    {
+	    switch (cur_char) {
+	    case 022:		/* ^R */
+		/* search next */
+		previous_history();
+		if (do_search(-1) == -1)
+		    next_history();
+		break;
+	    case 023:		/* ^S */
+		/* search previous */
+		next_history();
+		if (do_search(1) == -1)
+		    previous_history();
+		break;
+		break;
+	    case '\n':		/* ^J */
+	    case '\r':		/* ^M */
+		/* accept */
+		switch_prompt(search_prompt, prompt);
+		if (search_result != NULL)
+		    copy_line(search_result->line);
+		free(prev_line);
+		search_result_width = 0;
+		search_mode = FALSE;
+		break;
+#ifndef DEL_ERASES_CURRENT_CHAR
+	    case 0177:		/* DEL */
+	    /* FIXME: conflict! */
+	    //case 023:		/* Re-mapped from CSI~3 in ansi_getc() */
+#endif
+	    case 010:		/* ^H */
+		delete_backward();
+		do_search(1);
+		break;
+	    default:
+		/* abort, restore previous input line */
+		switch_prompt(search_prompt, prompt);
+		copy_line(prev_line);
+		free(prev_line);
+		search_result_width = 0;
+		search_mode = FALSE;
+		break;
+	    }
+	    }
 	}
     }
 }
+
+
+static int
+do_search(int dir)
+{
+    int ret = -1;
+
+    if ((ret = history_search(cur_line, dir)) != -1)
+	search_result = current_history();
+    print_search_result(search_result);
+    return ret;
+}
+
+
+void
+print_search_result(const struct hist * result)
+{
+    int i, width = 0;
+
+    SUSPENDOUTPUT;
+    fputs(search_prompt2, stderr);
+    if (result != NULL && result->line != NULL) {
+	fputs(result->line, stderr);
+	width = strwidth(result->line);
+    }
+
+    /* overwrite previous search result, and the line might
+       just have gotten 1 double-width character shorter */
+    for (i = 0; i < search_result_width - width + 2; i++)
+	putc(SPACE, stderr);
+    for (i = 0; i < search_result_width - width + 2; i++)
+	putc(BACKSPACE, stderr);
+    search_result_width = width;
+
+    /* restore cursor position */
+    for (i = 0; i < width; i++)
+	putc(BACKSPACE, stderr);
+    for (i = 0; i < strlen(search_prompt2); i++)
+	putc(BACKSPACE, stderr);
+    RESUMEOUTPUT;
+}
+
+
+static void
+switch_prompt(const char * old_prompt, const char * new_prompt)
+{
+    int i, len;
+
+    SUSPENDOUTPUT;
+
+    /* clear search results (if any) */
+    if (search_mode) {
+	for (i = 0; i < search_result_width + strlen(search_prompt2); i++)
+	    user_putc(SPACE);
+	for (i = 0; i < search_result_width + strlen(search_prompt2); i++)
+	    user_putc(BACKSPACE);
+    }
+
+    /* clear current line */
+    clear_line(old_prompt);
+    putc('\r', stderr);
+    fputs(new_prompt, stderr);
+    cur_pos = 0;
+    
+    /* erase remainder of previous prompt */
+    len = GPMAX((int)strlen(old_prompt) - (int)strlen(new_prompt), 0);
+    for (i = 0; i < len; i++)
+	user_putc(SPACE);
+    for (i = 0; i < len; i++)
+	user_putc(BACKSPACE);
+    RESUMEOUTPUT;
+}
+
 
 /* Fix up the line from cur_pos to max_pos.
  * Does not need any terminal capabilities except backspace,
@@ -952,6 +1223,7 @@ fix_line()
 {
     size_t i;
 
+    SUSPENDOUTPUT;
     /* write tail of string */
     for (i = cur_pos; i < max_pos; i++)
 	user_putc(cur_line[i]);
@@ -962,6 +1234,12 @@ fix_line()
      */
     user_putc(SPACE);
     user_putc(SPACE);
+    if (search_mode) {
+	for (i = 0; i < search_result_width; i++)
+	    user_putc(SPACE);
+	for (i = 0; i < search_result_width; i++)
+	    user_putc(BACKSPACE);
+    }
     user_putc(BACKSPACE);
     user_putc(BACKSPACE);
 
@@ -969,6 +1247,7 @@ fix_line()
     i = cur_pos;
     for (cur_pos = max_pos; cur_pos > i; )
 	backspace();
+    RESUMEOUTPUT;
 }
 
 /* redraw the entire line, putting the cursor where it belongs */
@@ -977,6 +1256,7 @@ redraw_line(const char *prompt)
 {
     size_t i;
 
+    SUSPENDOUTPUT;
     fputs(prompt, stderr);
     user_puts(cur_line);
 
@@ -984,12 +1264,14 @@ redraw_line(const char *prompt)
     i = cur_pos;
     for (cur_pos = max_pos; cur_pos > i; )
 	backspace();
+    RESUMEOUTPUT;
 }
 
 /* clear cur_line and the screen line */
 static void
 clear_line(const char *prompt)
 {
+    SUSPENDOUTPUT;
     putc('\r', stderr);
     fputs(prompt, stderr);
     cur_pos = 0;
@@ -1006,6 +1288,7 @@ clear_line(const char *prompt)
     putc('\r', stderr);
     fputs(prompt, stderr);
     cur_pos = 0;
+    RESUMEOUTPUT;
 }
 
 /* clear to end of line and the screen end of line */
@@ -1014,6 +1297,7 @@ clear_eoline(const char *prompt)
 {
     size_t save_pos = cur_pos;
 
+    SUSPENDOUTPUT;
     while (cur_pos < max_pos) {
 	user_putc(SPACE);
 	if (isdoublewidth(cur_line[cur_pos]))
@@ -1027,6 +1311,7 @@ clear_eoline(const char *prompt)
     putc('\r', stderr);
     fputs(prompt, stderr);
     user_puts(cur_line);
+    RESUMEOUTPUT;
 }
 
 /* delete the full or partial word immediately before cursor position */
@@ -1034,6 +1319,8 @@ static void
 delete_previous_word()
 {
     size_t save_pos = cur_pos;
+
+    SUSPENDOUTPUT;
     /* skip whitespace */
     while ((cur_pos > 0) &&
 	   (cur_line[cur_pos - 1] == SPACE)) {
@@ -1067,6 +1354,7 @@ delete_previous_word()
 	max_pos = cur_pos + m;
 	fix_line();
     }
+    RESUMEOUTPUT;
 }
 
 /* copy line to cur_line, draw it and set cur_pos and max_pos */
@@ -1081,7 +1369,7 @@ copy_line(char *line)
     cur_pos = max_pos = strlen(cur_line);
 }
 
-#if !defined(MSDOS) && !defined(_Windows)
+#if !defined(MSDOS) && !defined(_WIN32)
 /* Convert ANSI arrow keys to control characters */
 static int
 ansi_getc()
@@ -1131,24 +1419,24 @@ ansi_getc()
 }
 #endif
 
-#if defined(MSDOS) || defined(_Windows) || defined(OS2)
+#if defined(MSDOS) || defined(_WIN32) || defined(OS2)
 
 #ifdef WGP_CONSOLE
 static int
 win_getch()
 {
     if (term && term->waitforinput)
-        return term->waitforinput(0);
+	return term->waitforinput(0);
     else
-        return ConsoleGetch();
+	return ConsoleGetch();
 }
-#endif
+#else
 
 /* Convert Arrow keystrokes to Control characters: */
 static int
 msdos_getch()
 {
-	char c;
+    int c;
 
 #ifdef DJGPP
     int ch = getkey();
@@ -1211,8 +1499,8 @@ msdos_getch()
     }
     return c;
 }
-
-#endif /* MSDOS || _Windows || OS2 */
+#endif /* WGP_CONSOLE */
+#endif /* MSDOS || _WIN32 || OS2 */
 
 #ifdef OS2
 /* We need to call different procedures, dependent on the
@@ -1241,7 +1529,7 @@ os2_getch() {
 static void
 set_termio()
 {
-#if !defined(MSDOS) && !defined(_Windows)
+#if !defined(MSDOS) && !defined(_WIN32)
 /* set termio so we can do our own input processing */
 /* and save the old terminal modes so we can reset them later */
     if (term_set == 0) {
@@ -1345,13 +1633,13 @@ set_termio()
 #  endif			/* not SGTTY */
 	term_set = 1;
     }
-#endif /* not MSDOS && not _Windows */
+#endif /* not MSDOS && not _WIN32 */
 }
 
 static void
 reset_termio()
 {
-#if !defined(MSDOS) && !defined(_Windows)
+#if !defined(MSDOS) && !defined(_WIN32)
 /* reset saved terminal modes */
     if (term_set == 1) {
 #  ifdef SGTTY
@@ -1374,7 +1662,7 @@ reset_termio()
 #  endif			/* not SGTTY */
 	term_set = 0;
     }
-#endif /* not MSDOS && not _Windows */
+#endif /* not MSDOS && not _WIN32 */
 }
 
-#endif /* READLINE && !(HAVE_LIBREADLINE || HAVE_LIBEDITLINE) */
+#endif /* READLINE */

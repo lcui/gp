@@ -1,8 +1,8 @@
 %% Don't forget to change the paper format in the next line
 %
-% $Id: faq-ja.tex,v 1.6.2.1 2014/09/08 17:24:49 sfeam Exp $
+% $Id: faq-ja.tex,v 1.7 2017/05/19 16:19:33 sfeam Exp $
 % translated to Japanese by Shigeharu TAKENO
-% Original: Id: faq.tex,v 1.53 2014/08/21 15:05:33 sfeam Exp
+% Original: Id: faq.tex,v 1.57 2015/01/01 01:23:06 sfeam Exp
 %
 %%% \documentclass[a4paper,11pt]{article}
 \documentclass[a4paper,11pt]{jarticle}
@@ -54,10 +54,10 @@
 % cannot combine them together with simultaneous output to dvi, pdf, html.
 % Thus do it this way:
 \ifx\html\undefined
-    % Not running this file by latex2html:
-    \def\http#1{{\small\href{http://#1}{\url{#1}}}}
-    \def\mailto#1{{\small\href{mailto://#1}{\url{#1}}}}
-    \def\news#1{\href{news://#1}{\url{#1}}}
+    % Modified Dec 2014 (EAM) for use with htlatex or pdflatex
+    \def\http#1{{\small\href{http://#1}{\url{http://#1}}}}
+    \def\mailto#1{{\small\href{mailto://#1}{\url{mailto://#1}}}}
+    \def\news#1{\href{news://#1}{\url{news://#1}}}
 %%%  \def\ftp#1#2{\href{ftp://#1#2}{\url{#1} in \url{#2}}}
     \def\ftp#1#2{\href{ftp://#1#2}{\url{#1} の \url{#2}}}
 %% end Japanese
@@ -115,19 +115,18 @@
 \maketitle
 
 \noindent
-%%% This document refers both to \gnuplot{} version 4 (latest release 4.6.5)
-%%% and version 5 (planned release Fall 2014).
-この文書は、\gnuplot{} バージョン 4 (最終リリースは 4.6.5) と
-バージョン 5 (2014 秋にリリース予定) の両方を対象としています。
+%%% This document refers both to \gnuplot{} version 4 and version 5.
+この文書は、\gnuplot{} バージョン 4 とバージョン 5 の
+両方を対象としています。
 %% end Japanese
         \\
 %%% FAQ version
-%%% \verb+Revision: 1.53 +, dated
-%%% \verb+Date: 2014/08/21 15:05:33 +.
+%%% \verb+Revision: 1.57 +, dated
+%%% \verb+Date: 2015/01/01 01:23:06 +.
 % <== 本当は \verb++ の内側に $ がついている
 この FAQ のバージョンは %
-\verb+$+\verb+Revision: 1.53 $+,
-\verb+$+\verb+Date: 2014/08/21 15:05:33 $+ です。
+\verb+$+\verb+Revision: 1.57 $+,
+\verb+$+\verb+Date: 2015/01/01 01:23:06 $+ です。
 % 少し細工をしないと RCS に書き換えられてしまう。
 
 \tableofcontents
@@ -303,16 +302,13 @@ cgi スクリプトでラップすることで
 
 %%% \Gnuplot{} is in widespread use on many platforms, including
 %%% MS Windows, linux, unix, and OSX.  The current source code retains
-%%% supports for older systems as well, including VMS, Ultrix, OS/2,
-%%% MS-DOS, BeOS, and Macintosh. 
-%%% Versions since 4.0 have not been extensively tested on legacy platforms.
+%%% supports for older systems as well, including VMS, Ultrix, OS/2, and
+%%% MS-DOS. 16-bit platforms are no longer supported.
 \gnuplot{} は、MS Windows, linux, unix, OSX などの
 多くのプラットホーム上で、広く利用できます。
 現在のソースコードは、VMS, Ultrix, OS/2, %
-MS-DOS, BeOS, Macintosh などの 
-古いシステムのサポートも保持していますが、
-バージョン 4.0 以降では古いプラットホームでは
-徹底的なテストは行われていません。
+MS-DOS などの古いシステムのサポートも保持していますが、
+16 bit プラットホームはもうサポートしていません。
 
 %%% You should be able to compile the \gnuplot{} source more or
 %%% less out of the box in any reasonably standard (ANSI/ISO C, POSIX)
@@ -396,17 +392,17 @@ gnuplot Web ページ \http{www.gnuplot.info} を見てください。
 \section{インストール}
 
 %%% \subsection{What is the current version of \gnuplot?}
-\subsection{\gnuplot{} の最新バージョンは ?}
+\subsection{\gnuplot{} の最新バージョンは}
 
-%%% The current released version of \gnuplot{} is 4.6, released in 
-%%% March 2012.
+%%% The current released version of \gnuplot{} is 5.0, released in 
+%%% January 2015.
 %%% Incremental versions (patchlevel 1, 2, ...) are typically released 
 %%% every six months.
-%%% The development version of \gnuplot{} is currently 5.0.
-\gnuplot{} の最新の正式リリース版は、2012 年 3 月リリースの 4.6 です。
+%%% The development version of \gnuplot{} is currently 5.1.
+\gnuplot{} の最新の正式リリース版は、2015 年 1 月リリースの 5.0 です。
 更新バージョン (パッチレベル 1, 2, ...) は、だいたい 6 ヶ月毎に
 リリースされます。
-\gnuplot{} の開発版は、現在は 5.0 となっています。
+\gnuplot{} の開発版は、現在は 5.1 となっています。
 
 %%% \subsection{Where can I get \gnuplot?}
 \subsection{\gnuplot{} はどこで手に入れられますか}
@@ -427,27 +423,10 @@ gnuplot Web ページ \http{www.gnuplot.info} を見てください。
 ソース配布物 ("gnuplot-4.6.0.tar.gz" または同様の名前) %
 は公式の配布サイト \http{sourceforge.net/projects/gnuplot} にあります。
 
-%%%% % Older versions of the \gnuplot{} distribution is mirrored
-%%%% % at the Comprehensive TeX Archive Network (CTAN) in the
-%%%% % \textit{graphics/gnuplot} directory. See
-% 古い版の \gnuplot{} の配布物は CTAN 
-% (the Comprehensive TeX Archive Network) の \\
-% \textit{graphics/gnuplot} %
-% ディレクトリでミラーリングされています。
-% 以下を参照してください。
-% %% end Japanese
-% \begin{itemize}
-%%% % \item \http{www.ctan.org/}.
-% \item \http{www.ctan.org/}
-% %% end Japanese
-% \end{itemize}
-
-
-
 %%% \subsection{Where can I get current development version of \gnuplot?}
 \subsection{\gnuplot{} の最新の開発版はどこで手に入れられますか}
 
-%%% The development version of gnuplot is availble as a cvs source 
+%%% The development version of gnuplot is available as a cvs source 
 %%% tree online for
 %%% direct browsing from \http{sourceforge.net/projects/gnuplot/}, section
 %%% "CVS". You can download all current sources according to the documentation
@@ -628,9 +607,9 @@ makefile のヘッダにあるオプションを必要なら更新して、
 
 %%% There is repository of contributed patches in the "Patches" section 
 %%% on gnuplot's
-%%% sourceforge site \http{sourceforge.net/tracker/?group_id=2055&atid=302055}.
+%%% sourceforge site \http{sourceforge.net/p/gnuplot/patches/}.
 寄稿されたパッチの置き場所は gnuplot の sourceforge サイト 
-\http{sourceforge.net/tracker/?group_id=2055&atid=302055} %
+\http{sourceforge.net/p/gnuplot/patches/} %
 の "Patches" セクションにあります。
 
 %%% \subsection{How do I determine which options are compiled into \gnuplot?}
@@ -869,8 +848,8 @@ OpenOffice.org は SVG 形式も、AutoCAD の dxf 形式も読みこむことができます。
 %%% \textbackslash{}includgraphics command.
 %%% The epslatex and cairolatex terminals produce both a graphics
 %%% file (*.eps or *.pdf) and a *.tex document file that refers to it.
-%%% Gnuplot version 4.6 has a tikz terminal type that produces full text and
-%%% graphics when the output is processed with pdflatex.
+%%% The tikz terminal produces full text and graphics to a pdf file
+%%% when the output is processed with pdflatex.
 gnuplot を使って \TeX\ や \LaTeX\ 文書に取り込むためのグラフを作る方法は
 何通りもあります。
 取り込む *.tex ファイルの断片を直接生成する出力形式もありますし、
@@ -878,8 +857,8 @@ gnuplot を使って \TeX\ や \LaTeX\ 文書に取り込むためのグラフを作る方法は
 *.eps, *.pdf, *.png 出力を生成するものもあります。
 epslatex と cairolatex 出力形式は、画像ファイル (*.eps か *.pdf) と
 それを参照する *.tex 文書ファイルの両方を生成します。
-gnuplot 4.6 には tikz 出力形式があり、出力を pdflatex で処理する場合は
-これでテキストとグラフ全部を生成できます。
+tikz 出力形式は、テキストとグラフを生成し、
+その出力を pdflatex で処理すれば PDF ファイルが作成できます。
 
 %%% Most word processors can import bitmap images (png, pbm, etc).
 %%% The disadvantage of this approach is that the resolution of your
@@ -975,19 +954,19 @@ gnuplot は、例えば色や太さや点の形などの、
 %%% \subsection{Can I animate my graphs?}
 \subsection{グラフをアニメーション化できますか}
 
-%%% Only \gnuplot{} terminal type directly outputs an animated file:
+%%% Only one \gnuplot{} terminal type (gif) directly outputs an animated file:
 \gnuplot{} 出力形式で直接アニメーションファイルを出力できるのは
-以下のものだけです:
+以下のもの (gif) だけです:
 %% end Japanese
 \begin{verbatim}
 set terminal gif animate {delay <time>} {loop <N>} {optimize}
 \end{verbatim}
 
 %%% Have a look at
-%%% \http{http://gnuplot.sourceforge.net/demo/animate.html}
+%%% \http{gnuplot.sourceforge.net/demo/animate.html}
 %%% in the demo collection.
 デモの中の
-\http{http://gnuplot.sourceforge.net/demo/animate.html}
+\http{gnuplot.sourceforge.net/demo/animate.html}
 も参照してください。
 
 %%% \subsection{How do I plot implicit defined graphs?}
@@ -1155,7 +1134,7 @@ gnuplot> splot x with pm3d, x*y with points
 %%% \subsection{How to produce labeled contours}
 \subsection{ラベルつきの等高線を描画するには}
 
-%%% Labeling individual contous in a contour plot required special
+%%% Labeling individual contours in a contour plot required special
 %%% tricks and extra processing steps in \gnuplot{} version 4.
 %%% See
 %%% \http{gnuplot.sourceforge.net/scripts/index.html\#tricks-here}.
@@ -1165,11 +1144,11 @@ gnuplot> splot x with pm3d, x*y with points
 
 %%% In version 5 the procedure is much simpler.  Plot the contours twice,
 %%% once "with lines" and once "with labels".  To make the labels stand out
-%%% it may help set use 
+%%% it may help to use
 バージョン 5 では、その手順はとても簡単です。
 等高線を、1 回目は "with lines" で、2 回目は "with labels" で %
 2 回描画するだけです。
-目立つラベルを作成したい場合は、以下のような設定を使用するといいでしょう。
+目立つラベルを作成したい場合は、以下のようにするといいでしょう。
 %% end Japanese
 \begin{verbatim}
 set style textbox opaque noborder
@@ -1343,7 +1322,7 @@ gnuplot は 3 次元モデリングプログラムではなく、
 %%% a virtual reality.
 %%% It works OK for \textit{set pm3d map} but for true 3D you would 
 %%% be probably more
-%%% happy writing a convertor of your facets into a VRML file.
+%%% happy writing a converter of your facets into a VRML file.
 結果として、
 gnuplot は曲面や 3 次元の物体を仮想現実としては描画しません。
 これは \textit{set pm3d map} に対してはちゃんと働きますが、
@@ -1403,7 +1382,7 @@ gnuplot は曲面や 3 次元の物体を仮想現実としては描画しません。
 
 %%% \Gnuplot{} supports various clustered and stacked histogram styles 
 %%% to display
-%%% pretabulated data.  It also offers a few options for accummulating 
+%%% pretabulated data.  It also offers a few options for accumulating 
 %%% raw data
 %%% into bins, which can in turn be displayed as a bar chart.  See the 
 %%% documentation
@@ -1419,13 +1398,13 @@ gnuplot は曲面や 3 次元の物体を仮想現実としては描画しません。
 \subsection{\gnuplot{} は円グラフが書けますか、四半期グラフはどうですか}
 
 %%% Pie charts are sort of difficult in \gnuplot, but see
-%%% \http{http://gnuplot.sourceforge.net/demo/circles.html}, 
+%%% \http{gnuplot.sourceforge.net/demo/circles.html}, 
 %%%  or have a look at
-%%% \http{http://gnuplot-tricks.blogspot.com/2009/08/pie-charts-entirely-in-gnuplot.html}.
+%%% \http{gnuplot-tricks.blogspot.com/2009/08/pie-charts-entirely-in-gnuplot.html}.
 円グラフは \gnuplot{} ではちょっと面倒ですが、以下を見てください。
-\http{http://gnuplot.sourceforge.net/demo/circles.html} 
+\http{gnuplot.sourceforge.net/demo/circles.html} 
 または、以下を参照してください。
-\http{http://gnuplot-tricks.blogspot.com/2009/08/pie-charts-entirely-in-gnuplot.html}
+\http{gnuplot-tricks.blogspot.com/2009/08/pie-charts-entirely-in-gnuplot.html}
 
 %%% The demo collection contains an example of a simple Gantt chart.  
 %%% This capability
@@ -1703,7 +1682,7 @@ gnuplot は \verb+replot+ コマンドはサポートしてますが、
 %%% the way to go. If you have investigated a problem in detail, especially
 %%% if you can provide a simple script that reproduces the error, please
 %%% upload it to the bug-tracker at
-%%% \http{sourceforge.net/tracker/?group_id=2055&atid=102055}.
+%%% \http{sourceforge.net/p/gnuplot/bugs}.
 これらをチェックした後でなおそれがバグであると確信したなら、
 以下に進んでください。
 もしあなたが公正で普遍的な種類のバグレポートを作ったならば、
@@ -1711,7 +1690,7 @@ gnuplot は \verb+replot+ コマンドはサポートしてますが、
 への投稿が取るべき道でしょう。
 もし問題の詳細な調査結果があるならば、
 特にそのエラーを際限する簡単なスクリプトを提供できるならば、
-それを \http{sourceforge.net/tracker/?group_id=2055&atid=102055} の
+それを \http{sourceforge.net/p/gnuplot/bugs} の
 bug-tracker にアップロードしてください。
 
 %%% The tracker on sourceforge is for reporting bugs and collecting bug fixes
@@ -1775,11 +1754,11 @@ gnuplot はその後劇的に変化しましたが、
 
 %%% Extensions or patches are available on the "Patches" page of the
 %%% gnuplot development site
-%%% \http{sourceforge.net/tracker/?group_id=2055&atid=302055}.
+%%% \http{sourceforge.net/p/gnuplot/patches/}.
 %%% The current development version will generally include features that are
 %%% not yet part of the most recent official release of gnuplot.
 拡張やパッチは、gnuplot の開発サイト %
-\http{sourceforge.net/tracker/?group_id=2055&atid=302055} %
+\http{sourceforge.net/p/gnuplot/patches/} %
 の "Patches" ページにあります。
 一般的に、現在の開発版は、最終公式リリース版の gnuplot には
 まだ入っていない機能も入っています。
@@ -1886,12 +1865,12 @@ Octave の最新版は常に \http{www.octave.org} にあります。
 
 %%% The preferred way of submitting, commenting and upgrading patches is
 %%% via 'Patches' section on 
-%%% \http{sourceforge.net/tracker/?group_id=2055&atid=302055}.
+%%% \http{sourceforge.net/p/gnuplot/patches/}.
 %%% You may want to send a note to \mailto{gnuplot-beta@lists.sourceforge.net}
 %%% for
 %%% more lively discussion.
 投稿よりもむしろ、
-\http{sourceforge.net/tracker/?group_id=2055&atid=302055} %
+\http{sourceforge.net/p/gnuplot/patches/} %
 の 'Patches' セクションを通してコメントするか
 パッチを更新する方が望ましいです。
 \mailto{gnuplot-beta@lists.sourceforge.net} は、
@@ -1915,7 +1894,7 @@ Octave の最新版は常に \http{www.octave.org} にあります。
 
 
 %%% \subsection{Open questions for inclusion into the FAQ?}
-\subsection{FAQ に含まれるような未解決の質問は ?}
+\subsection{FAQ に含まれるような未解決の質問は}
 
 
 % \mailto{gnuplot-beta@lists.sourceforge.net}.
@@ -2181,7 +2160,7 @@ set tmargin at screen 0.95
 
 
 %%% \subsection{Help! None of my fonts work.}
-\subsection{助けて! 私のフォントが使えない。}
+\subsection{助けて! 私のフォントが使えない}
 
 %%% Gnuplot does not do font handling by itself; it must necessarily leave
 %%% that to the individual device support libraries. Unfortunately, this
@@ -2264,8 +2243,8 @@ Linux システムでは、これらの出力形式はシステムの fontconfig ユーティリティが
 %% end Japanese
 \end{description}
 
-%%% \subsection{\Gnuplot{} does not open a plot windoe for x11 or qt. Why?}
-\subsection{x11 または qt で \gnuplot{} が描画ウィンドウを開きません。なぜですか}
+%%% \subsection{\Gnuplot{} does not open a plot window on VMS. Why?}
+\subsection{VMS 上で \gnuplot{} が描画ウィンドウを開きませんが、なぜですか}
 %% end Japanese
 %%% On VMS, you need to make several symbols:
 VMS 上ではいくつかの記号を作らなければいけません:
@@ -2403,7 +2382,7 @@ C や Fortran でも行なわれています。
 
 
 %%% \subsection{My output files are incomplete!}
-\subsection{私の出力が不完全です!}
+\subsection{私の出力が不完全です}
 
 %%% You may need to flush the output with a closing \verb+set output+.
 %%% Some output formats (postscript, pdf, latex, svg, ...) can include several
@@ -2515,8 +2494,7 @@ version 4.2, 4.4, 4.6, 5.0 のリリースは Ethan Merritt が取りまとめました。
 %%% from Russell Lang, John Campbell, David Kotz, Rob Cunningham, Daniel
 %%% Lewart and Alex Woo. Reworked by Thomas Koenig from a draft
 %%% by Alex Woo, with corrections and additions from Alex Woo, John
-%%% Campbell, Russell Lang, David Kotz and many corrections from Daniel
-%%% Lewart.
+%%% Campbell, Russell Lang, David Kotz and many corrections from Daniel Lewart.
 このリストは %
 Russell Lang, John Campbell, David Kotz, Rob Cunningham, Daniel Lewart,
 Alex Woo %
@@ -2526,27 +2504,19 @@ Alex Woo, John Campbell, Russell Lang, David Kotz らの修正と追加、
 Daniel Lewart による多くの修正が Thomas Koenig によりまとめ直されました。
 %% end Japanese
 %%% Again reworked for \gnuplot{} 3.7 by Alexander Mai and Juergen v.Hagen
-%%% with corrections by Lars Hecking, Hans-Bernhard Broecker and other
-%%% people.
+%%% with corrections by Lars Hecking, Hans-Bernhard Broecker and others.
 そして、\gnuplot{} 3.7 用に再び %
 Lars Hecking, Hans-Bernhard Broecker およびその他の人々による修正が %
 Alexander Mai と Juergen v.Hagen によりまとめ直されました。
 %% end Japanese
-%%% Revised for \gnuplot{} 4.0 release by Petr Mikul\'{\i}k and Ethan Merritt.
-\gnuplot{} 4.0 用の修正は、
+%%% Revised for \gnuplot{} version 4 by Petr Mikul\'{\i}k and Ethan Merritt.
+\gnuplot{} バージョン 4 用の修正は、
 Petr Mikul\'{\i}k と Ethan Merritt により行なわれました。
 %% end Japanese
-%%% Revised for \gnuplot{} 4.2 release by Petr Mikul\'{\i}k and Ethan Merritt.
-\gnuplot{} 4.2 用の修正は、
-Petr Mikul\'{\i}k と Ethan Merritt により行なわれました。
-%% end Japanese
-%%% Revised for \gnuplot{} 4.4 and 4.6 releases by Ethan Merritt.
-\gnuplot{} 4.4 と 4.6 用の修正は、
+%%% Revised for \gnuplot{} version 5 by Ethan Merritt.
+\gnuplot{} バージョン 5 用の修正は、
 Ethan Merritt により行なわれました。
 %% end Japanese
-%%% Revised for \gnuplot{} 5.0 by Ethan Merritt.
-\gnuplot{} 5.0 用の修正は、
-Ethan Merritt により行なわれました。
 
 %%% 
 (訳注: 日本語訳は Shigeharu TAKENO (\mailto{shige@iee.niit.ac.jp}) により

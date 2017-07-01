@@ -1,5 +1,5 @@
 #ifndef lint
-static char *RCSid() { return RCSid("$Id: interpol.c,v 1.46.2.6 2017/02/24 19:52:09 sfeam Exp $"); }
+static char *RCSid() { return RCSid("$Id: interpol.c,v 1.58 2017/03/16 18:16:12 sfeam Exp $"); }
 #endif
 
 /* GNUPLOT - interpol.c */
@@ -193,7 +193,7 @@ static spline_coeff *cp_approx_spline __PROTO((struct curve_points * plot, int f
 static spline_coeff *cp_tridiag __PROTO((struct curve_points * plot, int first_point, int num_points));
 static void do_cubic __PROTO((struct curve_points * plot, spline_coeff * sc, int first_point, int num_points, struct coordinate * dest));
 static void do_freq __PROTO((struct curve_points *plot,	int first_point, int num_points));
-int compare_points __PROTO((SORTFUNC_ARGS p1, SORTFUNC_ARGS p2));
+static int compare_points __PROTO((SORTFUNC_ARGS p1, SORTFUNC_ARGS p2));
 
 
 /*
@@ -998,7 +998,8 @@ gen_interp_frequency(struct curve_points *plot)
 
     curves = num_curves(plot);
 
-    if (plot->plot_smooth == SMOOTH_CUMULATIVE_NORMALISED) {
+    if (plot->plot_smooth == SMOOTH_FREQUENCY_NORMALISED
+    ||  plot->plot_smooth == SMOOTH_CUMULATIVE_NORMALISED) {
 	first_point = 0;
 
 	for (i = 0; i < curves; i++) {
@@ -1022,7 +1023,7 @@ gen_interp_frequency(struct curve_points *plot)
         /* If cumulative, replace the current y-value with the
            sum of all previous y-values. This assumes that the
            data has already been sorted by x-values. */
-        if( plot->plot_smooth == SMOOTH_CUMULATIVE ) {
+        if (plot->plot_smooth == SMOOTH_CUMULATIVE) {
             y = 0;
             for (j = first_point; j < first_point + num_points; j++) {
                 if (plot->points[j].type == UNDEFINED) 
@@ -1051,6 +1052,16 @@ gen_interp_frequency(struct curve_points *plot)
 		plot->points[j].y = y / y_total;
 	    }
 	}
+
+        /* Finally, normalized frequency smoothing means that we take our
+           existing histogram and divide each value by the total */
+        if (plot->plot_smooth == SMOOTH_FREQUENCY_NORMALISED) {
+	    for (j = first_point; j < first_point + num_points; j++) {
+		if (plot->points[j].type == UNDEFINED)
+		    continue;
+		plot->points[j].y /= y_total;
+	    }
+        }
 
 
         do_freq(plot, first_point, num_points);
@@ -1134,8 +1145,7 @@ gen_interp(struct curve_points *plot)
 /* HBB 20010720: To avoid undefined behaviour that would be caused by
  * casting functions pointers around, changed arguments to what
  * qsort() *really* wants */
-/* HBB 20010720: removed 'static' to avoid HP-sUX gcc bug */
-int
+static int
 compare_points(SORTFUNC_ARGS arg1, SORTFUNC_ARGS arg2)
 {
     struct coordinate const *p1 = arg1;
@@ -1215,6 +1225,7 @@ cp_implode(struct curve_points *cp)
 	    } else {
 		cp->points[j].x = x;
  		if ( cp->plot_smooth == SMOOTH_FREQUENCY ||
+ 		     cp->plot_smooth == SMOOTH_FREQUENCY_NORMALISED ||
  		     cp->plot_smooth == SMOOTH_CUMULATIVE ||
 		     cp->plot_smooth == SMOOTH_CUMULATIVE_NORMALISED )
 		    k = 1;
@@ -1257,7 +1268,7 @@ cp_implode(struct curve_points *cp)
 			cp->points[j].type = OUTRANGE;
 		is_outrange:
 		    ;
-		} /* if(! all inrange) */
+		} /* if (! all inrange) */
 
 		j++;		/* next valid entry */
 		k = 0;		/* to read */
@@ -1268,6 +1279,7 @@ cp_implode(struct curve_points *cp)
 	if (k) {
 	    cp->points[j].x = x;
 	    if ( cp->plot_smooth == SMOOTH_FREQUENCY ||
+		 cp->plot_smooth == SMOOTH_FREQUENCY_NORMALISED ||
 		 cp->plot_smooth == SMOOTH_CUMULATIVE ||
 		 cp->plot_smooth == SMOOTH_CUMULATIVE_NORMALISED)
 		k = 1;
@@ -1435,4 +1447,134 @@ mcs_interp(struct curve_points *plot)
 #undef C1
 #undef C2
 #undef C3
+}
+
+/*
+ * Binned histogram of input values.
+ *
+ *   plot FOO using N:(1) bins{=<nbins>} {binrange=[binlow:binhigh]}
+ *                        {binwidth=<width>} with boxes
+ *
+ * This option is EXPERIMENTAL, details may change before inclusion in a stable
+ * gnuplot release.
+ *
+ * If no binrange is given, binlow and binhigh are taken from the x range of the data.
+ * In either of these cases binlow is the midpoint x-coordinate of the first bin
+ * and binhigh is the midpoint x-coordinate of the last bin.
+ * Points that lie exactly on a bin boundary are assigned to the upper bin.
+ * Bin assignments are not affected by "set xrange".
+ * Notes:
+ *    binwidth = (binhigh-binlow) / (nbins-1)
+ *        xmin = binlow - binwidth/2
+ *        xmax = binhigh + binwidth/2
+ *    first bin holds points with (xmin =< x < xmin + binwidth)
+ *    last bin holds points with (xmax-binwidth =< x < binhigh + binwidth)
+ */
+void
+make_bins(struct curve_points *plot, int nbins,
+          double binlow, double binhigh, double binwidth)
+{
+    int i, binno;
+    double *bin;
+    double bottom, top, range;
+    struct axis *xaxis = &axis_array[plot->x_axis];
+    struct axis *yaxis = &axis_array[plot->y_axis];
+    double ymax = 0;
+    int N = plot->p_count;
+
+    /* Find the range of points to be binned */
+    if (binlow != binhigh) {
+	/* Explicit binrange [min:max] in the plot command */
+	bottom = binlow;
+	top = binhigh;
+    } else {
+	/* Take binrange from the data itself */
+	bottom = VERYLARGE; top = -VERYLARGE;
+	for (i=0; i<N; i++) {
+	    if (bottom > plot->points[i].x)
+		bottom = plot->points[i].x;
+	    if (top < plot->points[i].x)
+		top = plot->points[i].x;
+	}
+	if (top <= bottom)
+	    int_warn(NO_CARET, "invalid bin range [%g:%g]", bottom, top);
+    }
+    bottom = axis_log_value(xaxis, bottom);
+    top = axis_log_value(xaxis, top);
+
+    /* If a fixed binwidth was provided, find total number of bins */
+    if (binwidth > 0) {
+	double temp;
+	nbins = 1 + (top - bottom) / binwidth;
+	temp = nbins * binwidth - (top - bottom);
+	bottom -= temp/2.;
+	top += temp/2.;
+    }
+    /* otherwise we use (N-1) intervals between midpoints of bin 1 and bin N */
+    else {
+	binwidth = (top - bottom) / (nbins - 1);
+	bottom -= binwidth/2.;
+	top += binwidth/2.;
+    }
+    range = top - bottom;
+
+    FPRINTF((stderr,"make_bins: %d bins from %g to %g, binwidth %g\n",
+	    nbins, bottom, top, binwidth));
+
+    bin = gp_alloc(nbins*sizeof(double), "bins");
+    for (i=0; i<nbins; i++)
+ 	bin[i] = 0;
+    for (i=0; i<N; i++) {
+	if (plot->points[i].type == UNDEFINED)
+	    continue;
+	binno = floor(nbins * (plot->points[i].x - bottom) / range);
+	if (0 <= binno && binno < nbins)
+	    bin[binno] += axis_de_log_value(yaxis, plot->points[i].y);
+    }
+
+    if (xaxis->autoscale & AUTOSCALE_MIN) {
+	if (xaxis->min > bottom)
+	    xaxis->min = bottom;
+    }
+    if (xaxis->autoscale & AUTOSCALE_MAX) {
+	if (xaxis->max < top)
+	    xaxis->max = top;
+    }
+
+    /* Replace the original data with one entry per bin.
+     * new x = midpoint of bin
+     * new y = number of points in the bin
+     */
+    plot->p_count = nbins;
+    plot->points = gp_realloc( plot->points, nbins * sizeof(struct coordinate), "curve_points");
+    for (i=0; i<nbins; i++) {
+	double bincent = bottom + (0.5 + (double)i) * binwidth;
+	plot->points[i].type = INRANGE;
+	plot->points[i].x     = bincent;
+	plot->points[i].xlow  = bincent - binwidth/2.;
+	plot->points[i].xhigh = bincent + binwidth/2.;
+	plot->points[i].y     = axis_log_value(yaxis, bin[i]);
+	plot->points[i].ylow  = plot->points[i].y;
+	plot->points[i].yhigh = plot->points[i].y;
+	plot->points[i].z = 0;	/* FIXME: leave it alone? */
+	if (inrange(axis_de_log_value(xaxis, bincent), xaxis->min, xaxis->max)) {
+	    if (ymax < bin[i])
+		ymax = bin[i];
+	} else {
+	    plot->points[i].type = OUTRANGE;
+	}
+	FPRINTF((stderr, "bin[%d] %g %g\n", i, plot->points[i].x, plot->points[i].y));
+    }
+
+    if (yaxis->autoscale & AUTOSCALE_MIN) {
+	if (yaxis->min > 0)
+	    yaxis->min = 0;
+    }
+    if (yaxis->autoscale & AUTOSCALE_MAX) {
+	if (yaxis->max < ymax)
+	    yaxis->max = ymax;
+    }
+
+    /* Clean up */
+    free(bin);
 }

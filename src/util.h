@@ -1,5 +1,5 @@
 /*
- * $Id: util.h,v 1.44.2.3 2016/10/21 21:00:09 sfeam Exp $
+ * $Id: util.h,v 1.51 2016/10/10 22:53:38 sfeam Exp $
  */
 
 /* GNUPLOT - util.h */
@@ -102,22 +102,22 @@ void gprintf __PROTO((char *, size_t, char *, double, double));
 #  if defined(__GNUC__)
     void os_error __PROTO((int, const char *, ...)) __attribute__((noreturn));
     void int_error __PROTO((int, const char *, ...)) __attribute__((noreturn));
-    void graph_error __PROTO((const char *, ...)) __attribute__((noreturn));
+    void common_error_exit __PROTO((void)) __attribute__((noreturn));
 #  elif defined(_MSC_VER)
     __declspec(noreturn) void os_error(int, const char *, ...);
     __declspec(noreturn) void int_error(int, const char *, ...);
-    __declspec(noreturn) void graph_error(const char *, ...);
+    __declspec(noreturn) void common_error_exit();
 #  else
     void os_error __PROTO((int, const char *, ...));
     void int_error __PROTO((int, const char *, ...));
-    void graph_error __PROTO((const char *, ...));
+    void common_error_exit __PROTO((void));
 #  endif
 void int_warn __PROTO((int, const char *, ...));
 #else
 void os_error __PROTO(());
 void int_error __PROTO(());
 void int_warn __PROTO(());
-void graph_error __PROTO(());
+void common_error_exit __PROTO(());
 #endif
 
 void squash_spaces __PROTO((char *s, int remain));
@@ -129,7 +129,9 @@ char *getusername __PROTO((void));
 
 TBOOLEAN contains8bit __PROTO((const char *s));
 TBOOLEAN utf8toulong __PROTO((unsigned long * wch, const char ** str));
+TBOOLEAN is_sjis_lead_byte(char c);
 size_t strlen_utf8 __PROTO((const char *s));
+size_t strlen_sjis(const char *s);
 size_t gp_strlen __PROTO((const char *s));
 char * gp_strchrn __PROTO((const char *s, int N));
 TBOOLEAN streq __PROTO((const char *a, const char *b));

@@ -359,8 +359,11 @@ void QtGnuplotScene::processEvent(QtGnuplotEventType type, QDataStream& in)
 		else
 			m_currentGroup.append(textItem);
 #ifdef EAM_BOXED_TEXT
-		if (m_inTextBox)
+		if (m_inTextBox) {
 			m_currentTextBox |= rect;
+			m_currentBoxRotation = m_textAngle;
+			m_currentBoxOrigin = point;
+		}
 #endif
 	}
 	else if (type == GEEnhancedFlush)
@@ -406,8 +409,11 @@ void QtGnuplotScene::processEvent(QtGnuplotEventType type, QDataStream& in)
 		else
 			m_currentGroup.append(m_enhanced);
 #ifdef EAM_BOXED_TEXT
-		if (m_inTextBox)
+		if (m_inTextBox) {
 			m_currentTextBox |= rect;
+			m_currentBoxRotation = m_textAngle;
+			m_currentBoxOrigin = point;
+		}
 #endif
 		m_enhanced = 0;
 	}
@@ -454,7 +460,6 @@ void QtGnuplotScene::processEvent(QtGnuplotEventType type, QDataStream& in)
 			m_zoomStopText->setPlainText(text); /// @todo font
 			m_zoomStopText->setPos(m_lastMousePos);
 			m_zoomRect->setRect(QRectF(m_zoomBoxCorner + QPointF(0.5, 0.5), m_lastMousePos + QPointF(0.5, 0.5)).normalized());
-			m_zoomRect->setZValue(32767);  // make sure guide box is on top
 		}
 	}
 	else if (type == GELineTo)
@@ -477,6 +482,7 @@ void QtGnuplotScene::processEvent(QtGnuplotEventType type, QDataStream& in)
 	{
 		for (int i = 0; i < 4; i++)
 			in >> m_axisValid[i] >> m_axisMin[i] >> m_axisLower[i] >> m_axisScale[i] >> m_axisLog[i];
+		in >> m_axisValid[4];
 	}
 	else if (type == GEAfterPlot) 
 	{
@@ -604,18 +610,22 @@ void QtGnuplotScene::processEvent(QtGnuplotEventType type, QDataStream& in)
 				  m_textMargin.x(), m_textMargin.y());
 			rectItem = addRect(outline, m_currentPen, Qt::NoBrush);
 			rectItem->setZValue(m_currentZ++);
+			rectItem->setTransformOriginPoint(m_currentBoxOrigin);
+			rectItem->setRotation(-m_currentBoxRotation);
 			m_currentGroup.append(rectItem);
 			m_inTextBox = false;
 			break;
 		case TEXTBOX_BACKGROUNDFILL:
 			/* Fill bounding box */
-			m_currentBrush.setColor(m_widget->backgroundColor());
+			m_currentBrush.setColor(m_currentPen.color());
 			m_currentBrush.setStyle(Qt::SolidPattern);
 			outline = m_currentTextBox.adjusted(
 				 -m_textMargin.x(), -m_textMargin.y(),
 				  m_textMargin.x(), m_textMargin.y());
 			rectItem = addRect(outline, Qt::NoPen, m_currentBrush);
 			rectItem->setZValue(m_currentZ++);
+			rectItem->setTransformOriginPoint(m_currentBoxOrigin);
+			rectItem->setRotation(-m_currentBoxRotation);
 			m_currentGroup.append(rectItem);
 			m_inTextBox = false;
 			break;
@@ -653,10 +663,13 @@ void QtGnuplotScene::resetItems()
 
 	m_zoomRect = addRect(QRect(), QPen(QColor(0, 0, 0, 200)), QBrush(QColor(0, 0, 255, 40)));
 	m_zoomRect->setVisible(false);
+	m_zoomRect->setZValue(32767);       // make sure guide box is on top
 	m_zoomStartText = addText("");
 	m_zoomStopText  = addText("");
 	m_zoomStartText->setVisible(false);
 	m_zoomStopText->setVisible(false);
+	m_zoomStartText->setZValue(32767);  // make sure guide box annotation is on top
+	m_zoomStopText->setZValue(32767);
 	m_horizontalRuler = addLine(QLine(0, 0, width(), 0) , QPen(QColor(0, 0, 0, 200)));
 	m_verticalRuler   = addLine(QLine(0, 0, 0, height()), QPen(QColor(0, 0, 0, 200)));
 	m_lineTo          = addLine(QLine()                 , QPen(QColor(0, 0, 0, 200)));
@@ -675,6 +688,9 @@ void QtGnuplotScene::resetItems()
 	m_hypertextList.clear();
 	m_hypertextList.append(addRect(QRect(), QPen(QColor(0, 0, 0, 100)), QBrush(QColor(225, 225, 225, 200))));
 	m_hypertextList[0]->setVisible(false);
+
+	m_hyperimage = addPixmap(QPixmap());
+	m_hyperimage->setVisible(false);
 
 	m_plot_group.clear();	// Memory leak?  Destroy groups first?
 }
@@ -793,21 +809,25 @@ void QtGnuplotScene::mouseMoveEvent(QGraphicsSceneMouseEvent* event)
 	// Mousing for inactive widgets
 	if (!m_widget->isActive())
 	{
-		m_lineTo->hide();
-		QString status;
-		if (m_axisValid[0])
-			status += QString("x = ")
-			+ QString::number(sceneToGraph(0,event->scenePos().x()));
-		if (m_axisValid[1])
-			status += QString(" y = ")
-			+ QString::number(sceneToGraph(1,event->scenePos().y()));
-		if (m_axisValid[2])
-			status += QString(" x2 = ")
-			+ QString::number(sceneToGraph(2,event->scenePos().x()));
-		if (m_axisValid[3])
-			status += QString(" y2 = ")
-			+ QString::number(sceneToGraph(3,event->scenePos().y()));
-		m_widget->setStatusText(status);
+		if (m_axisValid[4])	{
+			; // 3D plot - no mouse coordinate update
+		} else {
+			m_lineTo->hide();
+			QString status;
+			if (m_axisValid[0])
+				status += QString("x = ")
+				+ QString::number(sceneToGraph(0,event->scenePos().x()));
+			if (m_axisValid[1])
+				status += QString(" y = ")
+				+ QString::number(sceneToGraph(1,event->scenePos().y()));
+			if (m_axisValid[2])
+				status += QString(" x2 = ")
+				+ QString::number(sceneToGraph(2,event->scenePos().x()));
+			if (m_axisValid[3])
+				status += QString(" y2 = ")
+				+ QString::number(sceneToGraph(3,event->scenePos().y()));
+			m_widget->setStatusText(status);
+		}
 		QGraphicsScene::mouseMoveEvent(event);
 		return;
 	}
@@ -833,8 +853,22 @@ void QtGnuplotScene::mouseMoveEvent(QGraphicsSceneMouseEvent* event)
 			((QGraphicsRectItem *)m_hypertextList[0])->setRect(m_hypertextList[i]->boundingRect());
 			m_hypertextList[0]->setPos(m_hypertextList[i]->pos());
 			m_hypertextList[0]->setZValue(m_hypertextList[i]->zValue()-1);
+
+			// Special hypertext "image{(xsize,ysize)}:filename" 
+			QString current_text = ((QGraphicsTextItem *)(m_hypertextList[i]))->toPlainText();
+			if (current_text.startsWith("image")) {
+				int sep = current_text.indexOf(":");
+				QString imagename = current_text.mid(sep+1);
+				sep = imagename.indexOf("\n");
+				if (sep > 0)
+					imagename.truncate(sep);
+				m_hyperimage->setPixmap(QPixmap(imagename));
+				m_hyperimage->setVisible(true);
+				break;
+			}
 		} else {
 			m_hypertextList[i]->setVisible(false);
+			m_hyperimage->setVisible(false);
 		}
 	}
 	m_hypertextList[0]->setVisible(hit);

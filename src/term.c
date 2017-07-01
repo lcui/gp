@@ -1,5 +1,5 @@
 #ifndef lint
-static char *RCSid() { return RCSid("$Id: term.c,v 1.296.2.22 2016/04/15 18:00:40 sfeam Exp $"); }
+static char *RCSid() { return RCSid("$Id: term.c,v 1.332 2017/05/14 04:19:13 markisch Exp $"); }
 #endif
 
 /* GNUPLOT - term.c */
@@ -103,18 +103,16 @@ long mouse_mode = 0;
 char* mouse_alt_string = NULL;
 #endif
 
-#ifdef WIN32
-/* FIXME: Prototypes are in win/wcommon.h */
-FILE *open_printer __PROTO((void));     /* in wprinter.c */
-void close_printer __PROTO((FILE * outfile));
+#ifdef _WIN32
 # include "win/winmain.h"
+# include "win/wcommon.h"
 # ifdef __MSC__
 #  include <malloc.h>
 #  include <io.h>
 # else
 #  include <alloc.h>
 # endif                         /* MSC */
-#endif /* _Windows */
+#endif /* _WIN32 */
 
 static int termcomp __PROTO((const generic * a, const generic * b));
 
@@ -326,7 +324,7 @@ term_close_output()
 	output_pipe_open = FALSE;
     } else
 #endif /* PIPES */
-#ifdef _Windows
+#ifdef _WIN32
     if (stricmp(outstr, "PRN") == 0)
 	close_printer(gpoutfile);
     else
@@ -342,12 +340,6 @@ term_close_output()
 	fclose(gppsfile);
     gppsfile = NULL;
 }
-
-#ifdef OS2
-# define POPEN_MODE ("wb")
-#else
-# define POPEN_MODE ("w")
-#endif
 
 /* assigns dest to outstr, so it must be allocated or NULL
  * and it must not be outstr itself !
@@ -377,7 +369,7 @@ term_set_output(char *dest)
 #if defined(PIPES)
 	if (*dest == '|') {
 	    restrict_popen();
-#ifdef _Windows
+#ifdef _WIN32
 	    if (term && (term->flags & TERM_BINARY))
 		f = popen(dest + 1, "wb");
 	    else
@@ -392,7 +384,7 @@ term_set_output(char *dest)
 	} else {
 #endif /* PIPES */
 
-#ifdef _Windows
+#ifdef _WIN32
 	if (outstr && stricmp(outstr, "PRN") == 0) {
 	    /* we can't call open_printer() while printer is open, so */
 	    close_printer(gpoutfile);   /* close printer immediately if open */
@@ -482,19 +474,25 @@ term_initialise()
 	    fputs("Cannot reopen output file in binary", stderr);
 	/* and carry on, hoping for the best ! */
     }
-#if defined(MSDOS) || defined (_Windows) || defined(OS2)
-# ifdef _Windows
+#if defined(MSDOS) || defined (_WIN32) || defined(OS2)
+# ifdef _WIN32
     else if (!outstr && (term->flags & TERM_BINARY))
 # else
     else if (!outstr && !interactive && (term->flags & TERM_BINARY))
 # endif
 	{
+#if defined(_WIN32) && !defined(WGP_CONSOLE)
+#ifdef PIPES
+	    if (!output_pipe_open)
+#endif
+		if (outstr == NULL && !(term->flags & TERM_NO_OUTPUTFILE))
+		    int_error(c_token, "cannot output binary data to wgnuplot text window");
+#endif
 	    /* binary to stdout in non-interactive session... */
 	    fflush(stdout);
 	    setmode(fileno(stdout), O_BINARY);
 	}
 #endif
-
 
     if (!term_initialised || term_force_init) {
 	FPRINTF((stderr, "- calling term->init()\n"));
@@ -650,6 +648,12 @@ term_apply_lp_properties(struct lp_style_type *lp)
      */
     (*term->linewidth) (lp->l_width);
 
+    /* LT_DEFAULT (used only by "set errorbars"?) means don't change it */
+    /* FIXME: If this causes problems, test also for LP_ERRORBAR_SET    */
+    if (lt == LT_DEFAULT)
+	;
+    else
+
     /* The paradigm for handling linetype and dashtype in version 5 is */
     /* linetype < 0 (e.g. LT_BACKGROUND, LT_NODRAW) means some special */
     /* category that will be handled directly by term->linetype().     */
@@ -679,7 +683,7 @@ term_apply_lp_properties(struct lp_style_type *lp)
 	(*term->dashtype) (dt, NULL);
 
     /* Finally adjust the color of the line */
-    apply_pm3dcolor(&colorspec, term);
+    apply_pm3dcolor(&colorspec);
 }
 
 void
@@ -1154,10 +1158,6 @@ do_arc(
 
     /* Calculate the vertices */
     aspect = (double)term->v_tic / (double)term->h_tic;
-#ifdef WIN32
-    if (strcmp(term->name, "windows") == 0)
-	aspect = 1.;
-#endif
     for (i=0; i<segments; i++) {
 	vertex[i].x = cx + cos(DEG2RAD * (arc_start + i*INC)) * radius;
 	vertex[i].y = cy + sin(DEG2RAD * (arc_start + i*INC)) * radius * aspect;
@@ -1231,15 +1231,15 @@ null_justify_text(enum JUSTIFY just)
 }
 
 
-/* Change scale of plot.
- * Parameters are x,y scaling factors for this plot.
- * Some terminals (eg latex) need to do scaling themselves.
+/* 
+ * Deprecated terminal function (pre-version 3)
  */
 static int
 null_scale(double x, double y)
 {
     (void) x;                   /* avoid -Wunused warning */
     (void) y;
+    int_error(NO_CARET, "Attempt to call deprecated terminal function");
     return FALSE;               /* can't be done */
 }
 
@@ -1491,9 +1491,6 @@ change_term(const char *origname, int length)
     term = t;
     term_initialised = FALSE;
 
-    if (term->scale != null_scale)
-	fputs("Warning: scale interface is not null_scale - may not work with multiplot\n", stderr);
-
     /* check that optional fields are initialised to something */
     if (term->text_angle == 0)
 	term->text_angle = null_text_angle;
@@ -1521,7 +1518,7 @@ change_term(const char *origname, int length)
 	term->dashtype = null_dashtype;
 
     if (interactive)
-	fprintf(stderr, "Terminal type set to '%s'\n", term->name);
+	fprintf(stderr, "\nTerminal type is now '%s'\n", term->name);
 
     /* Invalidate any terminal-specific structures that may be active */
     invalidate_palette();
@@ -1530,9 +1527,7 @@ change_term(const char *origname, int length)
 }
 
 /*
- * Routine to detect what terminal is being used (or do anything else
- * that would be nice).  One anticipated (or allowed for) side effect
- * is that the global ``term'' may be set.
+ * Find an appropriate initial terminal type.
  * The environment variable GNUTERM is checked first; if that does
  * not exist, then the terminal hardware is checked, if possible,
  * and finally, we can check $TERM for some kinds of terminals.
@@ -1544,7 +1539,7 @@ void
 init_terminal()
 {
     char *term_name = DEFAULTTERM;
-#if (defined(MSDOS) && !defined(_Windows)) || defined(NEXT) || defined(SUN) || defined(X11)
+#if (defined(MSDOS) && !defined(_WIN32)) || defined(SUN) || defined(X11)
     char *env_term = NULL;      /* from TERM environment var */
 #endif
 #ifdef X11
@@ -1555,19 +1550,24 @@ init_terminal()
     /* GNUTERM environment variable is primary */
     gnuterm = getenv("GNUTERM");
     if (gnuterm != (char *) NULL) {
-	term_name = gnuterm;
+	/* April 2017 - allow GNUTERM to include terminal options */
+	char *set_term = "set term ";
+	char *set_term_command = gp_alloc(strlen(set_term) + strlen(gnuterm) + 4, NULL);
+	strcpy(set_term_command, set_term);
+	strcat(set_term_command, gnuterm);
+	do_string(set_term_command);
+	free(set_term_command);
+	return;
+
     } else {
 
 #ifdef VMS
 	term_name = vms_init();
 #endif /* VMS */
 
-#ifdef NEXT
-	env_term = getenv("TERM");
 	if (term_name == (char *) NULL
-	    && env_term != (char *) NULL && strcmp(env_term, "next") == 0)
-	    term_name = "next";
-#endif /* NeXT */
+            && getenv ("DOMTERM") != NULL)
+          term_name = "domterm";
 
 #ifdef __BEOS__
 	env_term = getenv("TERM");
@@ -1575,21 +1575,6 @@ init_terminal()
 	    && env_term != (char *) NULL && strcmp(env_term, "beterm") == 0)
 	    term_name = "be";
 #endif /* BeOS */
-
-#ifdef SUN
-	env_term = getenv("TERM");      /* try $TERM */
-	if (term_name == (char *) NULL
-	    && env_term != (char *) NULL && strcmp(env_term, "sun") == 0)
-	    term_name = "sun";
-#endif /* SUN */
-
-#ifdef WIN32
-#ifdef WXWIDGETS
-	/* let the wxWidgets terminal be the default when available */
-	if (term_name == (char *) NULL)
-	    term_name = "wxt";
-#endif
-#endif
 
 #ifdef QTTERM
 	if (term_name == (char *) NULL)
@@ -1601,10 +1586,10 @@ init_terminal()
 	    term_name = "wxt";
 #endif
 
-#ifdef _Windows
+#ifdef _WIN32
 	if (term_name == (char *) NULL)
 	    term_name = "win";
-#endif /* _Windows */
+#endif /* _WIN32 */
 
 #if defined(__APPLE__) && defined(__MACH__) && defined(HAVE_FRAMEWORK_AQUATERM)
 	/* Mac OS X with AquaTerm installed */
@@ -1664,7 +1649,6 @@ init_terminal()
 	struct udvt_entry *name = add_udv_by_name("GNUTERM");
 
 	Gstring(&name->udv_value, gp_strdup(term_name));
-	name->udv_undef = FALSE;
 
 	if (strchr(term_name,' '))
 	    namelength = strchr(term_name,' ') - term_name;
@@ -2316,8 +2300,10 @@ enhanced_recursion(
 
 		ENH_DEBUG(("Dealing with {\n"));
 
+		/* 30 Sep 2016:  Remove incorrect whitespace-eating loop going */
+		/* waaay back to 31-May-2000 */        /* while (*++p == ' '); */
+		++p;
 		/* get vertical offset (if present) for overprinted text */
-		while (*++p == ' ');
 		if (overprint == 2) {
 		    char *end;
 		    ovp = (float)strtod(p,&end);
@@ -2864,8 +2850,8 @@ recycle:
 	    if (!recycled) {
 	    	lp->p_type = this->lp_properties.p_type;
 	    	lp->p_interval = this->lp_properties.p_interval;
-	    	lp->p_char = this->lp_properties.p_char;
 	    	lp->p_size = this->lp_properties.p_size;
+	    	memcpy(lp->p_char, this->lp_properties.p_char, sizeof(lp->p_char));
 	    }
 	    return;
 	} else {
@@ -2983,7 +2969,7 @@ check_for_mouse_events()
     /* On Windows, Ctrl-C only sets this flag. */
     /* The next block duplicates the behaviour of inter(). */
     if (ctrlc_flag) {
-    ctrlc_flag = FALSE;
+	ctrlc_flag = FALSE;
 	term_reset();
 	putc('\n', stderr);
 	fprintf(stderr, "Ctrl-C detected!\n");

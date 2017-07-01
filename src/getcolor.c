@@ -1,5 +1,5 @@
 #ifndef lint
-static char *RCSid() { return RCSid("$Id: getcolor.c,v 1.36 2013/10/25 15:37:21 sfeam Exp $"); }
+static char *RCSid() { return RCSid("$Id: getcolor.c,v 1.39 2016/09/17 04:52:42 sfeam Exp $"); }
 #endif
 
 /* GNUPLOT - getcolor.c */
@@ -90,7 +90,7 @@ palettes_differ(t_sm_palette *p1, t_sm_palette *p2)
 
 	if (p1->gradient_num != p2->gradient_num)
 	    return 1;
-	for(i=0; i<p1->gradient_num; ++i) {
+	for (i=0; i<p1->gradient_num; ++i) {
 	    if (p1->gradient[i].pos != p2->gradient[i].pos)
 		return 1;
 	    if (p1->gradient[i].col.r != p2->gradient[i].col.r)
@@ -236,6 +236,7 @@ color_components_from_gray(double gray, rgb_color *color)
 	gray = 1.0;
 
     switch(sm_palette.colorMode) {
+    default:	/* Can't happen */
     case SMPAL_COLOR_MODE_GRAY:
 	color->r = color->g = color->b = pow(gray, 1.0/sm_palette.gamma);
 	return;  /* all done, no color space transformation needed  */
@@ -267,9 +268,6 @@ color_components_from_gray(double gray, rgb_color *color)
 	if (color->b > 1.0) color->b = 1.0; if (color->b < 0.0) color->b = 0.0;
 	}	
 	break;
-    default:
-	fprintf(stderr, "%s:%d ooops: Unknown colorMode '%c'.\n",
-		__FILE__, __LINE__, (char)(sm_palette.colorMode));
     }
 }
 
@@ -291,6 +289,7 @@ rgb1_from_gray(double gray, rgb_color *color)
 
     /* transform to RGB if necessary */
     switch(sm_palette.cmodel) {
+    default:
     case C_MODEL_RGB:
 	break;
     case C_MODEL_HSV:
@@ -305,9 +304,6 @@ rgb1_from_gray(double gray, rgb_color *color)
     case C_MODEL_XYZ:
 	CIEXYZ_2_RGB(color);
 	break;
-    default:
-	fprintf(stderr, "%s:%d ooops: Unknown color model '%c'\n",
-		__FILE__, __LINE__, (char)(sm_palette.cmodel));
     }
 }
 
@@ -414,7 +410,7 @@ get_max_dev(rgb_color *colors, int j, double limit)
     double sg = (colors[j].g - g) / j;
     double sb = (colors[j].b - b) / j;
 
-    for(i=1; i<j; ++i) {
+    for (i=1; i<j; ++i) {
 	double dx = i;
 
 	rdev = fabs(sr*dx + r - colors[i].r);
@@ -463,8 +459,7 @@ is_extremum(rgb_color left, rgb_color mid, rgb_color right)
 #define GROW_GRADIENT(n) do {						\
     if(cnt == gradient_size) {						\
 	gradient_size += (n);						\
-	gradient = (gradient_struct*)					\
-	    realloc(gradient, gradient_size * sizeof(gradient_struct));	\
+	gradient = realloc(gradient, gradient_size * sizeof(*gradient));\
     }									\
 } while(0)
 
@@ -517,13 +512,12 @@ approximate_palette(t_sm_palette *palette, int samples,
     ++cnt;
     color_components_from_gray(1.0 / samples, colors + 1);
 
-    for(i = 0; i < samples; ++i) {
-	for(j = 2; i + j <= samples; ++j) {
+    for (i = 0; i < samples; ++i) {
+	for (j = 2; i + j <= samples; ++j) {
 	    gray = ((double) (i + j)) / samples;
 	    if (j == colors_size) {
 	        colors_size += 50;
-		colors = (rgb_color *)
-		    realloc(colors, colors_size*sizeof(gradient_struct));
+		colors = realloc(colors, colors_size*sizeof(*colors));
 	    }
 	    color_components_from_gray(gray, colors + j);
 

@@ -1,5 +1,5 @@
 /*
- * $Id: syscfg.h,v 1.56 2014/07/28 22:16:27 sfeam Exp $
+ * $Id: syscfg.h,v 1.62 2017/01/29 12:18:21 markisch Exp $
  */
 
 /* GNUPLOT - syscfg.h */
@@ -60,12 +60,6 @@
  * PATHSEP:  [':'] Character which separates path names
  *
  */
-
-#if defined(__NeXT__) || defined(NEXT)
-# ifndef NEXT
-#  define NEXT
-# endif
-#endif /* NeXT */
 
 #ifdef OS2
 # define OS       "OS/2"
@@ -138,6 +132,15 @@
 #endif
 #ifndef _WIN32_IE
 # define _WIN32_IE 0x0501
+#endif
+
+/* The unicode/encoding support requires translation of file names */
+#if !defined(WINDOWS_NO_GUI)
+/* Need to include definition of fopen before re-defining */
+#include <stdlib.h>
+#include <stdio.h>
+FILE * win_fopen(const char *filename, const char *mode);
+#define fopen win_fopen
 #endif
 #endif /* _WINDOWS */
 
@@ -231,9 +234,6 @@
  * in the Windows section
  */
 #ifdef __WATCOMC__
-# include <direct.h>
-# include <dos.h>
-# define HAVE_GETCWD 1
 # define GP_EXCEPTION_NAME _exception
 #endif
 
@@ -292,8 +292,8 @@ typedef double coordval;
 # define is_system(c) ((c) == '!')
 #endif /* not VMS */
 
+/* HBB NOTE 2014-12-16: no longer defined by autoconf; hardwired here instead */
 #ifndef RETSIGTYPE
-/* assume ANSI definition by default */
 # define RETSIGTYPE void
 #endif
 
@@ -394,5 +394,11 @@ typedef unsigned char _Bool;
 #define FALSE false
 
 #define TBOOLEAN bool
+
+#if defined(READLINE) || defined(HAVE_LIBREADLINE) || defined(HAVE_LIBEDITLINE) || defined(HAVE_WINEDITLINE)
+# ifndef USE_READLINE
+#  define USE_READLINE
+# endif
+#endif
 
 #endif /* !SYSCFG_H */

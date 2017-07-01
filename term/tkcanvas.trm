@@ -1,5 +1,5 @@
 /* Hello, Emacs, this is -*-C-*-
- * $Id: tkcanvas.trm,v 1.28.8.7 2016/03/07 06:32:34 markisch Exp $
+ * $Id: tkcanvas.trm,v 1.37 2016/07/23 03:34:41 sfeam Exp $
  *
  */
 
@@ -556,7 +556,8 @@ TK_graphics()
     /* rather than corrupting it.					*/
     fseek(gpoutfile, 0L, SEEK_SET);
     fflush(gpoutfile);
-    ftruncate(fileno(gpoutfile), (off_t)0);
+    if (ftruncate(fileno(gpoutfile), (off_t)0) != 0)
+	int_error(NO_CARET,"Error re-writing output file: %s", strerror(errno));
 
     if (!tk_standalone && 
 	((tk_script_language == TK_LANG_PERL) || (tk_script_language == TK_LANG_PERLTKX)))
@@ -2084,7 +2085,7 @@ TK_boxed_text(unsigned int x, unsigned int y, int option)
 	tk_boxed = TRUE;
 	break;
     case TEXTBOX_BACKGROUNDFILL:
-	fprintf(gpoutfile, tk_box[tk_script_language], (tk_background[0] != NUL) ? tk_background : "white", "");
+	fprintf(gpoutfile, tk_box[tk_script_language], tk_color, "");
 	break;
     case TEXTBOX_GREY:
 	fprintf(gpoutfile, tk_box[tk_script_language], "grey75", "");

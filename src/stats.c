@@ -1,5 +1,5 @@
 #ifndef lint
-static char *RCSid() { return RCSid("$Id: stats.c,v 1.14.2.12 2016/09/28 05:38:15 sfeam Exp $"); }
+static char *RCSid() { return RCSid("$Id: stats.c,v 1.33 2016/09/28 05:32:34 sfeam Exp $"); }
 #endif
 
 /* GNUPLOT - stats.c */
@@ -66,6 +66,10 @@ static void two_column_output __PROTO(( struct sgl_column_stats x,
 					struct two_column_stats xy, long n));
 
 static void create_and_set_var __PROTO(( double val, char *prefix,
+					 char *base, char *suffix ));
+static void create_and_set_int_var __PROTO(( int ival, char *prefix,
+					 char *base, char *suffix ));
+static void create_and_store_var __PROTO(( t_value *data, char *prefix,
 					 char *base, char *suffix ));
 
 static void sgl_column_variables __PROTO(( struct sgl_column_stats res,
@@ -205,7 +209,7 @@ analyze_sgl_column( double *data, long n, long nc )
     }
 
     /* Mean and centre of gravity */
-    for( i=0; i<n; i++ ) {
+    for (i=0; i<n; i++) {
 	s  += data[i];
 	s2 += data[i]*data[i];
 	if ( nc > 0 ) {
@@ -219,7 +223,7 @@ analyze_sgl_column( double *data, long n, long nc )
     res.sum_sq = s2;
 
     /* Standard deviation, mean absolute deviation, skewness, and kurtosis */
-    for( i=0; i<n; i++ ) {
+    for (i=0; i<n; i++) {
 	double t = data[i] - res.mean;
 	ad += fabs(t);
 	d  += t;
@@ -247,7 +251,7 @@ analyze_sgl_column( double *data, long n, long nc )
     /* sample standard deviation */
     res.ssd = res.stddev * sqrt((double)(n) / (double)(n-1));
 
-    for( i=0; i<n; i++ ) {
+    for (i=0; i<n; i++) {
 	tmp[i].val = data[i];
 	tmp[i].index = i;
     }
@@ -298,7 +302,7 @@ analyze_two_columns( double *x, double *y,
     double s = 0;
     double ssyy, ssxx, ssxy;
 
-    for( i=0; i<n; i++ ) {
+    for (i=0; i<n; i++) {
 	s += x[i] * y[i];
     }
     res.sum_xy = s;
@@ -593,12 +597,25 @@ two_column_output( struct sgl_column_stats x,
 static void
 create_and_set_var( double val, char *prefix, char *base, char *suffix )
 {
+    t_value data;
+    Gcomplex( &data, val, 0.0 ); /* data is complex, real=val, imag=0.0 */
+    create_and_store_var( &data, prefix, base, suffix );
+}
+
+static void
+create_and_set_int_var( int ival, char *prefix, char *base, char *suffix )
+{
+    t_value data;
+    Ginteger( &data, ival );
+    create_and_store_var( &data, prefix, base, suffix );
+}
+
+static void
+create_and_store_var( t_value *data, char *prefix, char *base, char *suffix )
+{
     int len;
     char *varname;
     struct udvt_entry *udv_ptr;
-
-    t_value data;
-    Gcomplex( &data, val, 0.0 ); /* data is complex, real=val, imag=0.0 */
 
     /* In case prefix (or suffix) is NULL - make them empty strings */
     prefix = prefix ? prefix : "";
@@ -613,8 +630,7 @@ create_and_set_var( double val, char *prefix, char *base, char *suffix )
      * its own copy of the varname.
      */
     udv_ptr = add_udv_by_name(varname);
-    udv_ptr->udv_value = data;
-    udv_ptr->udv_undef = FALSE;
+    udv_ptr->udv_value = *data;
 
     free( varname );
 }
@@ -623,13 +639,13 @@ static void
 file_variables( struct file_stats s, char *prefix )
 {
     /* Suffix does not make sense here! */
-    create_and_set_var( s.records, prefix, "records", "" );
-    create_and_set_var( s.invalid, prefix, "invalid", "" );
-    create_and_set_var( s.columnheaders, prefix, "headers", "" );
-    create_and_set_var( s.blanks,  prefix, "blank",   "" );
-    create_and_set_var( s.blocks,  prefix, "blocks",  "" );
-    create_and_set_var( s.outofrange, prefix, "outofrange", "" );
-    create_and_set_var( df_last_col, prefix, "columns", "" );
+    create_and_set_int_var( s.records, prefix, "records", "" );
+    create_and_set_int_var( s.invalid, prefix, "invalid", "" );
+    create_and_set_int_var( s.columnheaders, prefix, "headers", "" );
+    create_and_set_int_var( s.blanks,  prefix, "blank",   "" );
+    create_and_set_int_var( s.blocks,  prefix, "blocks",  "" );
+    create_and_set_int_var( s.outofrange, prefix, "outofrange", "" );
+    create_and_set_int_var( df_last_col, prefix, "columns", "" );
 }
 
 static void
@@ -655,18 +671,18 @@ sgl_column_variables( struct sgl_column_stats s, char *prefix, char *suffix )
 
     /* If data set is matrix */
     if ( s.sx > 0 ) {
-	create_and_set_var( (s.min.index) % s.sx, prefix, "index_min_x", suffix );
-	create_and_set_var( (s.min.index) / s.sx, prefix, "index_min_y", suffix );
-	create_and_set_var( (s.max.index) % s.sx, prefix, "index_max_x", suffix );
-	create_and_set_var( (s.max.index) / s.sx, prefix, "index_max_y", suffix );
-	create_and_set_var( s.sx, prefix, "size_x", suffix );
-	create_and_set_var( s.sy, prefix, "size_y", suffix );
+	create_and_set_int_var( (s.min.index) % s.sx, prefix, "index_min_x", suffix );
+	create_and_set_int_var( (s.min.index) / s.sx, prefix, "index_min_y", suffix );
+	create_and_set_int_var( (s.max.index) % s.sx, prefix, "index_max_x", suffix );
+	create_and_set_int_var( (s.max.index) / s.sx, prefix, "index_max_y", suffix );
+	create_and_set_int_var( s.sx, prefix, "size_x", suffix );
+	create_and_set_int_var( s.sy, prefix, "size_y", suffix );
     } else {
 	create_and_set_var( s.median,         prefix, "median",      suffix );
 	create_and_set_var( s.lower_quartile, prefix, "lo_quartile", suffix );
 	create_and_set_var( s.upper_quartile, prefix, "up_quartile", suffix );
-	create_and_set_var( s.min.index, prefix, "index_min", suffix );
-	create_and_set_var( s.max.index, prefix, "index_max", suffix );
+	create_and_set_int_var( s.min.index, prefix, "index_min", suffix );
+	create_and_set_int_var( s.max.index, prefix, "index_max", suffix );
     }
 }
 
@@ -747,6 +763,7 @@ statsrequest(void)
 
     /* Vars that control output */
     TBOOLEAN do_output = TRUE;     /* Generate formatted output */
+    TBOOLEAN array_data = FALSE;
 
     c_token++;
 
@@ -801,9 +818,14 @@ statsrequest(void)
 	    goto stats_cleanup;
 	}
 
+	if (df_array && columns == 0)
+	    array_data = TRUE;
+
 	/* For all these below: we could save the state, switch off, then restore */
-	if ( axis_array[FIRST_X_AXIS].log || axis_array[FIRST_Y_AXIS].log )
+#if !defined(NONLINEAR_AXES) || (NONLINEAR_AXES == 0)
+	if (axis_array[FIRST_X_AXIS].log || axis_array[FIRST_Y_AXIS].log)
 	    int_error( NO_CARET, "Stats command not available with logscale active");
+#endif
 
 	if (axis_array[FIRST_X_AXIS].datatype == DT_TIMEDATE
 	||  axis_array[FIRST_Y_AXIS].datatype == DT_TIMEDATE )
@@ -937,6 +959,7 @@ statsrequest(void)
 	    int_warn( NO_CARET, "All points out of range" );
 	else
 	    int_warn( NO_CARET, "No valid data points found in file" );
+	goto stats_cleanup;
     }
 
     /* The analysis variables are named STATS_* unless the user either */
@@ -962,6 +985,9 @@ statsrequest(void)
     res_file = analyze_file( n, out_of_range, invalid, blanks, doubleblanks, columnheaders );
 
     /* Jan 2015: Revised detection and handling of matrix data */
+    if (array_data)
+	columns = 1;
+
     if (df_matrix) {
 	int nc = df_bin_record[df_num_bin_records-1].scan_dim[0];
 	res_y = analyze_sgl_column( data_y, n, nc );

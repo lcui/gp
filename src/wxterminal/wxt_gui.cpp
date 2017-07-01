@@ -1,5 +1,5 @@
 /*
- * $Id: wxt_gui.cpp,v 1.128.2.31 2017/03/04 08:20:41 markisch Exp $
+ * $Id: wxt_gui.cpp,v 1.170 2017/04/14 18:01:06 sfeam Exp $
  */
 
 /* GNUPLOT - wxt_gui.cpp */
@@ -117,8 +117,9 @@
 #include "bitmaps/png/config_png.h"
 #include "bitmaps/png/help_png.h"
 
-/* standard icon art from wx (used only for "Export to file" */
+/* standard icon art from wx */
 #include <wx/artprov.h>
+#include <wx/printdlg.h>
 
 extern "C" {
 #ifdef HAVE_CONFIG_H
@@ -191,6 +192,9 @@ BEGIN_EVENT_TABLE( wxtFrame, wxFrame )
 	EVT_CLOSE( wxtFrame::OnClose )
 	EVT_SIZE( wxtFrame::OnSize )
 	EVT_TOOL( Toolbar_ExportToFile, wxtFrame::OnExport )
+#ifdef WXT_PRINT
+	EVT_TOOL( Toolbar_Print, wxtFrame::OnPrint )
+#endif
 	/* Clipboard widget (should consolidate this with Export to File) */
 	EVT_TOOL( Toolbar_CopyToClipboard, wxtFrame::OnCopy )
 #ifdef USE_MOUSE
@@ -444,6 +448,11 @@ wxtFrame::wxtFrame( const wxString& title, wxWindowID id )
 	toolbar->AddTool(Toolbar_ExportToFile, wxT("Export"),
 				wxArtProvider::GetBitmap(wxART_FILE_SAVE_AS, wxART_TOOLBAR),
 				wxT("Export plot to file"));
+#ifdef WXT_PRINT
+	toolbar->AddTool(Toolbar_Print, wxT("Print"),
+				wxArtProvider::GetBitmap(wxART_PRINT, wxART_TOOLBAR),
+				wxT("Print plot"));
+#endif
 #ifdef USE_MOUSE
 #ifdef __WXOSX_COCOA__
 	/* wx 2.9 Cocoa bug & crash workaround for Lion, which does not have toolbar separators anymore */
@@ -516,9 +525,12 @@ void wxtFrame::OnExport( wxCommandEvent& WXUNUSED( event ) )
 
 	wxFileDialog exportFileDialog (this, wxT("Exported File Format"),
 		saveDir, wxT(""),
+#ifdef __WXMSW__
+		wxT("PNG files (*.png)|*.png|PDF files (*.pdf)|*.pdf|SVG files (*.svg)|*.svg|Enhanced Metafile (*.emf)|*.emf"),
+#else
 		wxT("PNG files (*.png)|*.png|PDF files (*.pdf)|*.pdf|SVG files (*.svg)|*.svg"),
+#endif
 		wxFD_SAVE|wxFD_OVERWRITE_PROMPT);
-
 	exportFileDialog.SetFilterIndex(userFilterIndex);
 
 	if (exportFileDialog.ShowModal() == wxID_CANCEL)
@@ -598,6 +610,43 @@ void wxtFrame::OnExport( wxCommandEvent& WXUNUSED( event ) )
 		break;
 #endif
 
+#ifdef __WXMSW__
+	case 3: {
+		/* Save as Enhanced Metafile. */
+		save_cr = panel->plot.cr;
+		cairo_save(save_cr);
+
+		RECT rect;
+		rect.left = rect.top = 0;
+		unsigned dpi = GetDPI();
+		rect.right  = MulDiv(panel->plot.device_xmax, dpi, 10);
+		rect.bottom = MulDiv(panel->plot.device_ymax, dpi, 10);
+		HDC hmf = CreateEnhMetaFileW(NULL, fullpathFilename.wc_str(), &rect, NULL);
+		// The win32_printing surface makes an effort to use the GDI API wherever possible,
+		// which should reduce the file size in many cases. 
+		surface = cairo_win32_printing_surface_create(hmf);
+		if (cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS) {
+			fprintf(stderr, "Cairo error: could not create surface for metafile.\n");
+			cairo_surface_destroy(surface);
+		} else {
+			panel->plot.cr = cairo_create(surface);
+			cairo_scale(panel->plot.cr,
+				1. / panel->plot.oversampling_scale,
+				1. / panel->plot.oversampling_scale);
+
+			panel->wxt_cairo_refresh();
+			cairo_show_page(panel->plot.cr);
+			cairo_surface_destroy(surface);
+			cairo_surface_finish(surface);
+			panel->plot.cr = save_cr;
+			cairo_restore(panel->plot.cr);
+		}
+		HENHMETAFILE hemf = CloseEnhMetaFile(hmf);
+		DeleteEnhMetaFile(hemf);
+		break;
+	}
+#endif
+
 	default :
 		fprintf(stderr, "Can't save in that file type.\n");
 		break;
@@ -606,6 +655,60 @@ void wxtFrame::OnExport( wxCommandEvent& WXUNUSED( event ) )
 	/* Save user environment selections. */
 	userFilterIndex = exportFileDialog.GetFilterIndex();
 }
+
+#ifdef WXT_PRINT
+/* toolbar event : Print
+ */
+void wxtFrame::OnPrint( wxCommandEvent& WXUNUSED( event ) )
+{
+	wxPrintDialogData printDialogData(printData);
+	printDialogData.EnablePageNumbers(false);
+	wxPrintDialog printDialog(this, &printDialogData);
+
+	if (printDialog.ShowModal() == wxID_CANCEL)
+		return;
+
+	wxDC* wxdc = printDialog.GetPrintDC();
+	wxdc->StartDoc(GetTitle());
+	wxdc->StartPage();
+
+	cairo_t* save_cr = panel->plot.cr;
+	cairo_save(save_cr);
+	cairo_surface_t *surface = NULL;
+#ifdef _WIN32
+	HDC hdc = (HDC) wxdc->GetHDC();
+	surface = cairo_win32_printing_surface_create(hdc);
+#endif
+	if (cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS) {
+		fprintf(stderr, "Cairo error: could not create surface for printer.\n");
+		cairo_surface_destroy(surface);
+	} else {
+		panel->plot.cr = cairo_create(surface);
+		// scale the plot according to the ratio of printer and screen dpi
+		wxSize ppi = wxdc->GetPPI();
+		unsigned dpi = 96;
+#ifdef _WIN32
+		dpi = GetDPI();
+#endif
+		double scaleX = ppi.GetWidth() / (double) dpi;
+		double scaleY = ppi.GetHeight() / (double) dpi;
+		cairo_surface_set_fallback_resolution(surface, ppi.GetWidth(), ppi.GetHeight());
+		cairo_scale(panel->plot.cr,
+			scaleX / panel->plot.oversampling_scale,
+			scaleY / panel->plot.oversampling_scale);
+		panel->wxt_cairo_refresh();
+		cairo_show_page(panel->plot.cr);
+		cairo_surface_destroy(surface);
+		cairo_surface_finish(surface);
+
+		panel->plot.cr = save_cr;
+		cairo_restore(panel->plot.cr);
+	}
+	wxdc->EndPage();
+	wxdc->EndDoc();
+	delete wxdc;
+}
+#endif
 
 /* toolbar event : Copy to clipboard
  * We will copy the panel to a bitmap, using platform-independant wxWidgets functions */
@@ -804,8 +907,6 @@ wxtPanel::wxtPanel( wxWindow *parent, wxWindowID id, const wxSize& size )
 #if defined(GTK_SURFACE)
 	gdkpixmap = NULL;
 #elif defined(__WXMSW__)
-	hdc = NULL;
-	hbm = NULL;
 #else /* IMAGE_SURFACE */
 	cairo_bitmap = NULL;
 	data32 = NULL;
@@ -935,7 +1036,7 @@ void wxtPanel::DrawToDC(wxDC &dc, wxRegion &region)
 #elif defined(__WXMSW__)
 	// Need to flush to make sure the bitmap is fully drawn.
 	cairo_surface_flush(cairo_get_target(plot.cr));
-	BitBlt((HDC) dc.GetHDC(), 0, 0, plot.device_xmax, plot.device_ymax, hdc, 0, 0, SRCCOPY);
+	BitBlt((HDC) dc.GetHDC(), 0, 0, plot.device_xmax, plot.device_ymax, cairo_win32_surface_get_dc(cairo_get_target(plot.cr)), 0, 0, SRCCOPY);
 #else
 	dc.DrawBitmap(*cairo_bitmap, 0, 0, false);
 #endif
@@ -1481,7 +1582,7 @@ static void wxt_check_for_anchors(unsigned int x, unsigned int y)
  * to prevent focus stealing) and is inconsistent with global bindings mechanism ) */
 void wxtPanel::RaiseConsoleWindow()
 {
-#ifdef USE_GTK
+#if defined(USE_GTK) && (GTK_MAJOR_VERSION == 2)
 	char *window_env;
 	unsigned long windowid = 0;
 	/* retrieve XID of gnuplot window */
@@ -1489,6 +1590,7 @@ void wxtPanel::RaiseConsoleWindow()
 	if (window_env)
 		sscanf(window_env, "%lu", &windowid);
 
+#ifdef USE_KDE3_DCOP
 /* NOTE: This code uses DCOP, a KDE3 mechanism that no longer exists in KDE4 */
 	char *ptr = getenv("KONSOLE_DCOP_SESSION"); /* Try KDE's Konsole first. */
 	if (ptr) {
@@ -1543,7 +1645,8 @@ void wxtPanel::RaiseConsoleWindow()
 		if (konsole_name) free(konsole_name);
 		if (cmd) free(cmd);
 	}
-/* NOTE: End of DCOP/KDE3 code (doesn't work in KDE4) */
+#endif /* USE_KDE3_DCOP */
+
 	/* now test for GNOME multitab console */
 	/* ... if somebody bothers to implement it ... */
 	/* we are not running in any known (implemented) multitab console */
@@ -3073,11 +3176,21 @@ void wxtPanel::wxt_cairo_draw_hypertext()
 	int width = 0;
 	int height = 0;
 
+	/* Text beginning "image(options):foo" is a request to pop-up foo */
+	const char *display_text = wxt_display_hypertext;
+	if (!strncmp("image", wxt_display_hypertext, 5)) {
+		const char *imagefile = strchr(wxt_display_hypertext, ':');
+		if (imagefile) {
+		    wxt_cairo_draw_hyperimage();
+		    display_text = imagefile+1;
+		}
+	}
+
 	plot.justify_mode = LEFT;
 	gp_cairo_draw_text(&plot,
 		wxt_display_anchor.x + term->h_char,
 		wxt_display_anchor.y + term->v_char / 2,
-		wxt_display_hypertext, &width, &height);
+		display_text, &width, &height);
 
 	gp_cairo_set_color(&plot, grey, 0.3);
 	gp_cairo_draw_fillbox(&plot,
@@ -3089,8 +3202,71 @@ void wxtPanel::wxt_cairo_draw_hypertext()
 	gp_cairo_draw_text(&plot,
 		wxt_display_anchor.x + term->h_char,
 		wxt_display_anchor.y + term->v_char / 2,
-		wxt_display_hypertext, NULL, NULL);
+		display_text, NULL, NULL);
 }
+
+void wxtPanel::wxt_cairo_draw_hyperimage()
+{
+	unsigned int width=0, height=0;
+	double scale_x, scale_y;
+	double anchor_x, anchor_y;
+	char *imagefile;
+	cairo_surface_t *image;
+	cairo_pattern_t *pattern;
+	cairo_matrix_t matrix;
+
+	/* Optional width and height from hypertext string */
+	if (wxt_display_hypertext[5] == '(')
+	    sscanf( &wxt_display_hypertext[6], "%5u,%5u", &width, &height );
+	if (width == 0) width = 300;
+	if (height == 0) height = 200;
+
+	/* Extract file name from string of form image(options):filename */
+	imagefile = (char *)strchr(wxt_display_hypertext, ':');
+	if (!imagefile)
+	    return;
+	else do { imagefile++; }
+	    while (*imagefile == ' ');
+
+	/* Open png file */
+	imagefile = strdup(imagefile);
+	if (strchr(imagefile,'\n'))
+	    *strchr(imagefile,'\n') = '\0';
+	image = cairo_image_surface_create_from_png(imagefile);
+	free(imagefile);
+	if (cairo_surface_status(image) != CAIRO_STATUS_SUCCESS) {
+	    cairo_surface_destroy(image);
+	    return;
+	}
+
+	/* Rescale image to allocated size on screen */
+	scale_x = (double)cairo_image_surface_get_width(image) / (double)(width);
+	scale_y = (double)cairo_image_surface_get_height(image) / (double)(height);
+	scale_x /= (double)GP_CAIRO_SCALE;
+	scale_y /= (double)GP_CAIRO_SCALE;
+
+	/* Bounce off right and bottom edges of frame */
+	anchor_x = wxt_display_anchor.x;
+	anchor_y = wxt_display_anchor.y;
+	if (anchor_x + width*GP_CAIRO_SCALE > term->xmax)
+	    anchor_x -= width*GP_CAIRO_SCALE;
+	if (anchor_y + height*GP_CAIRO_SCALE > term->ymax)
+	    anchor_y -= height*GP_CAIRO_SCALE;
+
+	cairo_save(plot.cr);
+	pattern = cairo_pattern_create_for_surface(image);
+	cairo_pattern_set_filter( pattern, CAIRO_FILTER_BEST );
+	cairo_matrix_init_scale( &matrix, scale_x, scale_y );
+	cairo_matrix_translate( &matrix, -anchor_x, -anchor_y );
+	cairo_pattern_set_matrix( pattern, &matrix );
+	cairo_set_source( plot.cr, pattern );
+
+	cairo_paint(plot.cr);
+	cairo_restore(plot.cr);
+	cairo_pattern_destroy(pattern);
+	cairo_surface_destroy(image);
+}
+
 
 /* given a plot number (id), return the associated plot structure */
 wxt_window_t* wxt_findwindowbyid(wxWindowID id)
@@ -3120,7 +3296,7 @@ void wxt_raise_window(wxt_window_t* window, bool force)
 		 * Refresh() also must be called, otherwise
 		 * the raise won't happen immediately */
 		window->frame->panel->Refresh(false);
-		gdk_window_raise(window->frame->GetHandle()->window);
+		gdk_window_raise(gtk_widget_get_window(window->frame->GetHandle()));
 #else
 #ifdef __WXMSW__
 		// Only restore the window if it is iconized.  In particular
@@ -3138,7 +3314,7 @@ void wxt_lower_window(wxt_window_t* window)
 {
 #ifdef USE_GTK
 	window->frame->panel->Refresh(false);
-	gdk_window_lower(window->frame->GetHandle()->window);
+	gdk_window_lower(gtk_widget_get_window(window->frame->GetHandle()));
 #else
 	window->frame->Lower();
 #endif /* USE_GTK */
@@ -3396,6 +3572,21 @@ void wxt_update_position(int number)
 }
 
 
+/* print the current plot */
+void wxt_screen_dump(void)
+{
+#ifdef WXT_PRINT
+	wxCommandEvent event;
+	if (wxt_current_window && wxt_current_window->frame && wxt_current_window->frame->IsShown())
+		wxt_current_window->frame->OnPrint(event);
+	else
+		int_error(c_token, "No active plot.");
+#else
+	int_error(c_token, "Printing support for the wxt terminal is not available on this platform.");
+#endif
+}
+
+
 /* --------------------------------------------------------
  * Cairo stuff
  * --------------------------------------------------------*/
@@ -3478,38 +3669,20 @@ int wxtPanel::wxt_cairo_create_platform_context()
 
 	FPRINTF((stderr,"wxt_cairo_create_context\n"));
 
-	/* free hdc and hbm */
 	wxt_cairo_free_platform_context();
 
 	/* GetHDC is a wxMSW specific wxDC method that returns
 	 * the HDC on which painting should be done */
-
-	/* Create a compatible DC. */
-	hdc = CreateCompatibleDC( (HDC) dc.GetHDC() );
-
-	if (!hdc)
-		return 1;
-
-	/* Create a bitmap big enough for our client rectangle. */
-	hbm = CreateCompatibleBitmap((HDC) dc.GetHDC(), plot.device_xmax, plot.device_ymax);
-
-	if ( !hbm )
-		return 1;
-
-	/* Select the bitmap into the off-screen DC. */
-	SelectObject(hdc, hbm);
-	surface = cairo_win32_surface_create( hdc );
+	surface = cairo_win32_surface_create_with_ddb(
+		(HDC) dc.GetHDC(), CAIRO_FORMAT_RGB24, 
+		plot.device_xmax, plot.device_ymax);
 	plot.cr = cairo_create(surface);
-	cairo_surface_destroy( surface );
+	cairo_surface_destroy(surface);
 	return 0;
 }
 
 void wxtPanel::wxt_cairo_free_platform_context()
 {
-	if (hdc)
-		DeleteDC(hdc);
-	if (hbm)
-		DeleteObject(hbm);
 }
 
 #else /* generic image surface */

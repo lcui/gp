@@ -77,10 +77,14 @@
 /* #undef HAVE_EDITLINE_READLINE_H */
 
 /* Define to 1 if you have the `erf' function. */
-/* #undef HAVE_ERF */
+#if __WATCOMC__ > 1290
+# define HAVE_ERF
+#endif
 
 /* Define to 1 if you have the `erfc' function. */
-/* #undef HAVE_ERFC */
+#if __WATCOMC__ > 1290
+# define HAVE_ERFC
+#endif
 
 /* Define to 1 if you have the <errno.h> header file. */
 #define HAVE_ERRNO_H 1
@@ -214,7 +218,6 @@
 
 /* Define to 1 if you have the `pclose' function. */
 #define HAVE_PCLOSE 1
-#define pclose _pclose
 
 /* Define to 1 if you have the <pdflib.h> header file. */
 /* #undef HAVE_PDFLIB_H */
@@ -572,9 +575,20 @@
 
 #define GP_INLINE _inline
 
-#define popen _popen
+#ifndef USE_FAKEPIPES
+# define popen _popen
+# define pclose _pclose
+#else
+# ifndef PIPES
+#  define PIPES 1
+# endif
+#endif
+#define __STDC_WANT_LIB_EXT1__ 1
 #define strnlen strnlen_s
 #define ftruncate _chsize
+#define _fcloseall fcloseall
+#define mktemp _mktemp
+#define wcsnicmp _wcsnicmp
 
 /* gnuplot.gih is not used by wgnuplot */
 #define NO_GIH 1

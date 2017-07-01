@@ -1,5 +1,5 @@
 #ifndef lint
-static char *RCSid() { return RCSid("$Id: gadgets.c,v 1.115.2.9 2017/02/25 05:20:32 sfeam Exp $"); }
+static char *RCSid() { return RCSid("$Id: gadgets.c,v 1.137 2017/04/20 00:07:16 sfeam Exp $"); }
 #endif
 
 /* GNUPLOT - gadgets.c */
@@ -61,9 +61,11 @@ color_box_struct default_color_box = {SMCOLOR_BOX_DEFAULT, 'v', 1, LT_BLACK, LAY
 					{screen, screen, screen, 0.05, 0.6, 0.0}, FALSE,
 					{0,0,0,0} };
 
-/* The graph box, in terminal coordinates, as calculated by boundary()
- * or boundary3d(): */
+/* The graph box (terminal coordinates) calculated by boundary() or boundary3d() */
 BoundingBox plot_bounds;
+
+/* The bounding box for 3D plots prior to applying view transformations */
+BoundingBox page_bounds;
 
 /* The bounding box for the entire drawable area  of current terminal */
 BoundingBox canvas;
@@ -121,11 +123,11 @@ text_label title = EMPTY_LABELSTRUCT;
 
 /* 'set timelabel' status */
 text_label timelabel = EMPTY_LABELSTRUCT;
-int timelabel_rotate = FALSE;
 int timelabel_bottom = TRUE;
 
 /* flag for polar mode */
 TBOOLEAN polar = FALSE;
+TBOOLEAN inverted_raxis = FALSE;
 
 /* zero threshold, may _not_ be 0! */
 double zero = ZERO;
@@ -141,10 +143,10 @@ t_colorspec background_fill = BACKGROUND_COLORSPEC;
 int draw_border = 31;	/* The current settings */
 int user_border = 31;	/* What the user last set explicitly */
 int border_layer = LAYER_FRONT;
-# define DEFAULT_BORDER_LP { 0, LT_BLACK, 0, DASHTYPE_SOLID, 0, 1.0, 1.0, 0, BLACK_COLORSPEC, DEFAULT_DASHPATTERN }
+# define DEFAULT_BORDER_LP { 0, LT_BLACK, 0, DASHTYPE_SOLID, 0, 0, 1.0, 1.0, DEFAULT_P_CHAR, BLACK_COLORSPEC, DEFAULT_DASHPATTERN }
 struct lp_style_type border_lp = DEFAULT_BORDER_LP;
 const struct lp_style_type default_border_lp = DEFAULT_BORDER_LP;
-const struct lp_style_type background_lp = {0, LT_BACKGROUND, 0, DASHTYPE_SOLID, 0, 1.0, 0.0, 0, BACKGROUND_COLORSPEC, DEFAULT_DASHPATTERN};
+const struct lp_style_type background_lp = {0, LT_BACKGROUND, 0, DASHTYPE_SOLID, 0, 0, 1.0, 0.0, DEFAULT_P_CHAR, BACKGROUND_COLORSPEC, DEFAULT_DASHPATTERN};
 
 /* set clip */
 TBOOLEAN clip_lines1 = TRUE;
@@ -164,6 +166,7 @@ enum PLOT_STYLE data_style = POINTSTYLE;
 enum PLOT_STYLE func_style = LINES;
 
 TBOOLEAN parametric = FALSE;
+TBOOLEAN in_parametric = FALSE;
 
 /* If last plot was a 3d one. */
 TBOOLEAN is_3d_plot = FALSE;
@@ -341,8 +344,7 @@ clip_line(int *x1, int *y1, int *x2, int *y2)
      * This is now addressed by making dx and dy (double) rather than (int)
      * but it might be better to hard-code the sign tests.
      */
-    double dx, dy;
-    double x, y;
+    double dx, dy, x, y;
 
     int x_intr[4], y_intr[4], count, pos1, pos2;
     int x_max, x_min, y_max, y_min;
@@ -558,7 +560,7 @@ clip_polygon(gpiPoint *in, gpiPoint *out, int in_length, int *out_length)
     clip_boundary[4] = clip_boundary[0];
 
     memcpy(tmp_corners, in, in_length * sizeof(gpiPoint));
-    for(i = 0; i < 4; i++) {
+    for (i = 0; i < 4; i++) {
 	clip_polygon_to_boundary(tmp_corners, out, in_length, out_length, clip_boundary+i);
 	memcpy(tmp_corners, out, *out_length * sizeof(gpiPoint));
 	in_length = *out_length;
@@ -586,12 +588,14 @@ clip_vector(unsigned int x, unsigned int y)
 /* Common routines for setting text or line color from t_colorspec */
 
 void
-apply_pm3dcolor(struct t_colorspec *tc, const struct termentry *t)
+apply_pm3dcolor(struct t_colorspec *tc)
 {
+    struct termentry *t = term;
+    double cbval;
+
     /* V5 - term->linetype(LT_BLACK) would clobber the current	*/
     /* dashtype so instead we use term->set_color(black).	*/
     static t_colorspec black = BLACK_COLORSPEC; 
-    double cbval;
 
     /* Replace colorspec with that of the requested line style */
     struct lp_style_type style;
@@ -624,17 +628,22 @@ apply_pm3dcolor(struct t_colorspec *tc, const struct termentry *t)
 	    t->set_color(tc);
 	return;
     }
+    /* Leave unchanged. (used only by "set errorbars"??) */
+    if (tc->type == TC_VARIABLE)
+	return;
+
     if (!is_plot_with_palette()) {
 	t->set_color(&black);
 	return;
     }
+
     switch (tc->type) {
 	case TC_Z:
 		set_color(cb2gray(z2cb(tc->value)));
 		break;
 	case TC_CB:
 		if (CB_AXIS.log)
-		    cbval = (tc->value <= 0) ? CB_AXIS.min : (log(tc->value) / CB_AXIS.log_base);
+		    cbval = (tc->value <= 0) ? CB_AXIS.min : axis_do_log((&CB_AXIS),tc->value);
 		else
 		    cbval = tc->value;
 		set_color(cb2gray(cbval));
@@ -646,10 +655,10 @@ apply_pm3dcolor(struct t_colorspec *tc, const struct termentry *t)
 }
 
 void
-reset_textcolor(const struct t_colorspec *tc, const struct termentry *t)
+reset_textcolor(const struct t_colorspec *tc)
 {
     if (tc->type != TC_DEFAULT)
-	(*t->linetype)(LT_BLACK);
+	term->linetype(LT_BLACK);
 }
 
 
@@ -657,7 +666,7 @@ void
 default_arrow_style(struct arrow_style_type *arrow)
 {
     static const struct lp_style_type tmp_lp_style = 
-	{0, LT_DEFAULT, 0, DASHTYPE_SOLID, 0, 1.0, 0.0, 0,
+	{0, LT_DEFAULT, 0, DASHTYPE_SOLID, 0, 0, 1.0, 0.0, DEFAULT_P_CHAR,
 	DEFAULT_COLORSPEC, DEFAULT_DASHPATTERN};
 
     arrow->tag = -1;
@@ -719,12 +728,11 @@ char *master_font = label->font;
 void
 get_offsets(
     struct text_label *this_label,
-    struct termentry *t,
     int *htic, int *vtic)
 {
     if ((this_label->lp_properties.flags & LP_SHOW_POINTS)) {
-	*htic = (pointsize * t->h_tic * 0.5);
-	*vtic = (pointsize * t->v_tic * 0.5);
+	*htic = (pointsize * term->h_tic * 0.5);
+	*vtic = (pointsize * term->v_tic * 0.5);
     } else {
 	*htic = 0;
 	*vtic = 0;
@@ -753,7 +761,7 @@ write_label(unsigned int x, unsigned int y, struct text_label *this_label)
 	int htic, vtic;
 	int justify = JUST_TOP;	/* This was the 2D default; 3D had CENTRE */
 
-	apply_pm3dcolor(&(this_label->textcolor),term);
+	apply_pm3dcolor(&(this_label->textcolor));
 	ignore_enhanced(this_label->noenhanced);
 
 	/* The text itself */
@@ -768,11 +776,14 @@ write_label(unsigned int x, unsigned int y, struct text_label *this_label)
 		term->set_font("");
 	} else {
 	    /* A normal label (always print text) */
-	    get_offsets(this_label, term, &htic, &vtic);
+	    get_offsets(this_label, &htic, &vtic);
 #ifdef EAM_BOXED_TEXT
 	    /* Initialize the bounding box accounting */
-	    if (this_label->boxed && term->boxed_text)
+	    if ((this_label->boxed && term->boxed_text)
+	    &&  (textbox_opts.opaque || !textbox_opts.noborder))
+	    {
 		(*term->boxed_text)(x + htic, y + vtic, TEXTBOX_INIT);
+	    }
 #endif
 	    if (this_label->rotate && (*term->text_angle) (this_label->rotate)) {
 		write_multiline(x + htic, y + vtic, this_label->text,
@@ -785,7 +796,9 @@ write_label(unsigned int x, unsigned int y, struct text_label *this_label)
 	    }
 	}
 #ifdef EAM_BOXED_TEXT
-	if (this_label->boxed && term->boxed_text) {
+	if ((this_label->boxed && term->boxed_text)
+	&&  (textbox_opts.opaque || !textbox_opts.noborder))
+	{
 
 	    /* Adjust the bounding box margins */
 	    (*term->boxed_text)((int)(textbox_opts.xmargin * 100.),
@@ -793,7 +806,12 @@ write_label(unsigned int x, unsigned int y, struct text_label *this_label)
 
 	    /* Blank out the box and reprint the label */
 	    if (textbox_opts.opaque) {
+		apply_pm3dcolor(&textbox_opts.fillcolor);
 		(*term->boxed_text)(0,0, TEXTBOX_BACKGROUNDFILL);
+		apply_pm3dcolor(&(this_label->textcolor));
+		/* Init for each of fill and border */
+		if (!textbox_opts.noborder)
+		    (*term->boxed_text)(x + htic, y + vtic, TEXTBOX_INIT);
 		if (this_label->rotate && (*term->text_angle) (this_label->rotate)) {
 		    write_multiline(x + htic, y + vtic, this_label->text,
 				this_label->pos, justify, this_label->rotate,
@@ -805,9 +823,12 @@ write_label(unsigned int x, unsigned int y, struct text_label *this_label)
 		}
 	    }
 
-	    /* Draw the bounding box - FIXME should set line properties first */
-	    if (!textbox_opts.noborder)
+	    /* Draw the bounding box */
+	    if (!textbox_opts.noborder) {
+		(*term->linewidth)(textbox_opts.linewidth);
+		apply_pm3dcolor(&textbox_opts.border_color);
 		(*term->boxed_text)(0,0, TEXTBOX_OUTLINE);
+	    }
 
 	    (*term->boxed_text)(0,0, TEXTBOX_FINISH);
 	}
@@ -864,3 +885,26 @@ label_width(const char *str, int *lines)
     return (mlen);
 }
 
+/*
+ * Here so that it can be shared by the 2D and 3D code
+ */
+void
+do_timelabel(unsigned int x, unsigned int y)
+{
+    char str[MAX_LINE_LEN+1];
+    char *save_format = timelabel.text;
+    time_t now;
+    time(&now);
+    /* there is probably no way to find out in advance how many
+     * chars strftime() writes */
+    strftime(str, MAX_LINE_LEN, save_format, localtime(&now));
+    timelabel.text = str;
+
+    /* The only drawback of using write_label() is that there is no way  */
+    /* to pass in a request for vertical justification JUST_BOT */
+    if (timelabel.rotate == 0 && !timelabel_bottom)
+	y -= term->v_char;
+
+    write_label(x, y, &timelabel);
+    timelabel.text = save_format;
+}

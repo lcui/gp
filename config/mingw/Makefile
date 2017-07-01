@@ -1,5 +1,5 @@
 # Hello, emacs: this is a -*- Makefile -*-
-# $Id: Makefile,v 1.48.2.14 2017/03/04 08:18:27 markisch Exp $
+# $Id: Makefile,v 1.72 2017/04/23 18:27:53 markisch Exp $
 #
 # GNUPLOT Makefile for MinGW/MSYS or MinGW-w64/MSYS2 on Windows 
 # This assumes a typical installation of the MinGW toolkit, the free
@@ -26,7 +26,7 @@
 # Comment out the definition lines to disable the according features:
 
 # Define this only if doing a release build
-RELEASE=1
+#RELEASE=1
 
 # Set-up your compiler environment
 #
@@ -48,6 +48,9 @@ RELEASE=1
 #PROGRAMFILES32=/c/Program\ Files
 # On 64bit machines: (no access to ProgramFiles(x86) variable!)
 PROGRAMFILES32=/c/Program\ Files\ \(x86\)
+
+# Define if you would like a UNICODE build
+UNICODE=1
 
 # GIF, PNG, JPEG device drivers
 # Requires gd library. There are two possibilities how to configure these
@@ -132,6 +135,10 @@ ICONV=1
 # Uncomment if you have libcerf
 # http://sourceforge.net/projects/libcerf/
 CERF=1
+
+# Uncomment if console mode gnuplot should use GNU readline
+# (not recommended)
+#GNUREADLINE=1
 
 # Below you can adapt paths according to your software setup:
 
@@ -301,6 +308,9 @@ else
   LDFLAGS += -s
 endif
 
+ifdef UNICODE
+  CFLAGS += -DUNICODE -D_UNICODE
+endif
 
 CFLAGS += $(CWFLAGS)
 
@@ -311,7 +321,7 @@ ifdef PIPES
 endif
 
 ifdef CONSOLE
-  OPTS += -DWGP_CONSOLE -DCONSOLE_SWITCH_CP
+  OPTS += -DWGP_CONSOLE
   LDFLAGS2 = -mconsole
 endif
 
@@ -504,6 +514,17 @@ ifdef CERF
 	TERMLIBS += -lcerf -lm
 endif
 
+ifdef GNUREADLINE
+ifeq ($(TARGET),gnuplot.exe)
+	CFLAGS += -DHAVE_LIBREADLINE -D HAVE_READLINE_READLINE_H -DHAVE_READLINE_HISTORY_H -DHAVE_READLINE_RESET
+	TERMLIBS += -lreadline -lncurses
+else
+	CFLAGS += -DREADLINE
+endif
+else
+	CFLAGS += -DREADLINE
+endif
+
 ifdef GNU_RC
   # RC = d:/cygnus/cygwin-b20/H-i586-cygwin32/bin/windres
   RC  = $(CCPATH)windres
@@ -549,7 +570,7 @@ pipes:
 	$(MAKE) TARGET=wgnuplot_pipes.exe default
 
 docs:
-	$(MAKE) TARGET=gnuplot.exe gnuplot.pdf gpcard.pdf tutorial.pdf \
+	$(MAKE) TARGET=gnuplot.exe gnuplot.pdf tutorial.pdf \
 		ps_symbols.pdf ps_fontfile_doc.pdf ps_guide.pdf
 
 support: $(HELPFILE) $(M)bf_test.exe $(QT_TARGET) $(QT_TRANSLATION) demo_plugin.dll $(LUATARGETS) $(HELPFILEJA)
@@ -565,7 +586,7 @@ include $(S)/makefile.all
 OBJS = $(COREOBJS) version.$(O) gpexecute.$(O) $(WX_OBJS) $(CAIRO_OBJS) $(QT_OBJS)
 
 WINOBJS = winmain.$(O) wgnuplib.$(O) wgraph.$(O) wprinter.$(O) \
-	  wpause.$(O) wgdiplus.$(O)
+	  wpause.$(O) wgdiplus.$(O) wd2d.$(O)
 ifneq ($(TARGET),gnuplot.exe)
 WINOBJS += wtext.$(O) screenbuf.$(O) wmenu.$(O) wredirect.$(O)
 endif
@@ -578,7 +599,7 @@ endif
 %.$(O): $W/%.c
 	$(CC) -c $(CFLAGS) $(CFLAGSEXTRA) -MMD -MT '$*.$$(O)' -MF $*.d -o $@ $<
 
-LDLIBS = -lkernel32 -lgdi32 -lwinspool -lcomdlg32 -lcomctl32 -ladvapi32 -lshell32 -lmsimg32 -lgdiplus
+LDLIBS = -lkernel32 -lgdi32 -lwinspool -lcomdlg32 -lcomctl32 -ladvapi32 -lshell32 -lmsimg32 -lgdiplus -lshlwapi -ld2d1 -ldwrite -lole32
 LDLIBS += -lhtmlhelp
 LDFLAGS2 += -L$(HHWPATH)lib
 ifdef MINGW64
@@ -627,12 +648,15 @@ $(S)/version.c: $(TOP)/VERSION $(TOP)/PATCHLEVEL $(TOP)/ChangeLog $(S)/Makefile.
 	$(MAKE) -C $(S) srcdir=. top_srcdir=.. -f Makefile.maint version.c
 endif
 
-WINDEPS = $(W)/wgnuplib.h $(W)/wcommon.h $(W)/wresourc.h $(W)/screenbuf.h $(W)/wgdiplus.h
+WINDEPS = $(W)/wgnuplib.h $(W)/wcommon.h $(W)/wresourc.h $(W)/screenbuf.h $(W)/wgdiplus.h $(W)/wd2d.h
 
 winmain.$(O): $(W)/winmain.c $(W)/wgnuplib.h $(W)/wtext.h plot.h
 	$(CC) -c $(CFLAGS) $(CFLAGSEXTRA) -MMD -MT '$*.$$(O)' -MF $*.d -o $@ $<
 
 wgdiplus.$(O): $(W)/wgdiplus.cpp $(WINDEPS)
+	$(CXX) -c $(CFLAGS) $(CXXFLAGS) $(CFLAGSEXTRA) -MMD -MT '$*.$$(O)' -MF $*.d -o $@ $<
+
+wd2d.$(O): $(W)/wd2d.cpp $(WINDEPS)
 	$(CXX) -c $(CFLAGS) $(CXXFLAGS) $(CFLAGSEXTRA) -MMD -MT '$*.$$(O)' -MF $*.d -o $@ $<
 
 wredirect.$(O): $(W)/wredirect.cpp $(WINDEPS)
@@ -729,7 +753,7 @@ $(JASRC): $(D)gnuplot-ja.doc $(D)term-ja.diff $(CORETERM)
 	-mkdir $(JA)demo
 	cp -r $(TOP)/term/* $(JA)term/
 	cp -r $(TOP)/docs/* $(JA)docs/
-	cp $(M)*.dat $(M)*.png $(M)*.rgb $(JA)demo/
+	cp $(M)*.dat $(M)*.png $(M)*.rgb $(M)*.dem $(JA)demo/
 	# Apply patch for Japanese docs
 	-rm $(JAD)tex2ja.awk $(JAD)sjisenc.c
 	-(cd $(JA) ; patch -p0 -i docs/term-ja.diff)
@@ -755,11 +779,17 @@ wgnuplot-ja.chm: $(JASRC) doc2html-ja.exe \
 	-$(HHC) $(JADW)wgnuplot.hhp
 	cp $(JADW)wgnuplot.chm $(HELPFILEJA)
 
-doc2html.exe: $(D)windows/doc2html.c $(D)termdoc.c $(D)xref.c version.$(O)
-	$(LD) $(LDFLAGS) -o $@ -DWINDOWS_NO_GUI $(CFLAGS) -I. -I$(D:/=) -I$(T:/=) $^
+doc2html.exe: $(D)windows/doc2html.c $(D)termdoc.c $(D)xref.c version.$(O) $(LUA_HELP)
+	$(LD) $(LDFLAGS) -o $@ -DWINDOWS_NO_GUI \
+	    -DVERSION_MAJOR='"$(MAINVERSION)"' -DPATCHLEVEL='"$(PATCHLEVEL)"' \
+	    $(CFLAGS) -I. -I$(D:/=) -I$(T:/=) \
+	    $(D)windows/doc2html.c $(D)termdoc.c $(D)xref.c
 
-doc2html-ja.exe: $(JASRC) $(D)windows/doc2html.c $(D)termdoc.c $(D)xref.c version.$(O)
-	$(LD) $(LDFLAGS) -o $@ -DWINDOWS_NO_GUI -DJAPANESE_DOC $(CFLAGS) -I. -I$(JAD) -I$(JA)/term $(D)windows/doc2html.c $(D)termdoc.c $(D)xref.c version.$(O)
+doc2html-ja.exe: $(JASRC) $(D)windows/doc2html.c $(D)termdoc.c $(D)xref.c version.$(O) $(LUA_HELP)
+	$(LD) $(LDFLAGS) -o $@ -DWINDOWS_NO_GUI \
+	    -DVERSION_MAJOR='"$(MAINVERSION)"' -DPATCHLEVEL='"$(PATCHLEVEL)"' \
+	    -DJAPANESE_DOC $(CFLAGS) -I. -I$(JAD) -I$(JA)/term \
+	    $(D)windows/doc2html.c $(D)termdoc.c $(D)xref.c
 
 doc2ms.exe: $(D)doc2ms.c $(D)termdoc.c $(D)xref.c version.$(O) $(LUA_HELP)
 	$(LD) $(LDFLAGS) -o $@ -DWINDOWS_NO_GUI $(CFLAGS) -I. -I$(D:/=) -I$(T:/=) $(D)doc2ms.c $(D)termdoc.c $(D)xref.c version.$(O)
@@ -781,7 +811,7 @@ config.h: $(TOP)/config/config.mgw
 # generate LUA TeX support files and terminal help
 ifdef LUA
 gnuplot-lua-tikz.sty: $(T)/lua/gnuplot-tikz.lua
-	$(LUA).exe $< style
+	$(LUA) $< style
 
 $(LUA_HELP): $(T)/lua/gnuplot-tikz.lua
 	$(LUA).exe $< termhelp > $@
@@ -889,10 +919,6 @@ tutorial.pdf: $(TUT)/eg1.plt $(TUT)/eg2.plt $(TUT)/eg3.plt $(TUT)/eg4.plt \
 	TEXINPUTS=.:$(TUT) latex tutorial.tex
 	dvipdfm tutorial.dvi
 
-gpcard.pdf: $(D)gpcard.tex
-	TEXINPUTS=$(TOP):$(D):${TEXINPUTS}: tex gpcard.tex
-	dvipdfm gpcard.dvi
-
 ps_symbols.pdf: $(D)psdoc/ps_symbols.gpi
 	GNUPLOT_LIB=$(D)psdoc GNUPLOT_PS_DIR=$(T)PostScript ./$(TARGET) -d ps_symbols.gpi
 	ps2pdf ps_symbols.ps
@@ -932,7 +958,7 @@ veryclean: clean
 	$(RM) gnuplot_qt.exe qtgnuplot_*.qm
 	$(RM) $(HELPFILE) $(HELPFILEJA) wgnuplot.chw wgnuplot.gid wgnuplot.mnu
 	$(RM) gnuplot.ps gnuplot.pdf
-	$(RM) gpcard.pdf tutorial.pdf
+	$(RM) tutorial.pdf
 	$(RM) ps_fontfile_doc.pdf ps_fontfile_doc.ps ps_guide.pdf
 	$(RM) ps_symbols.ps ps_symbols.pdf
 	$(RM) $(M)binary[123] $(M)fit.log $(M)soundfit.par
@@ -1011,7 +1037,6 @@ endif
 	mkdir -p $(DESTDIR)/docs
 	-cp -p gnuplot.pdf $(DESTDIR)/docs/
 	cp -p $(TOP)/FAQ.pdf $(DESTDIR)/docs/
-	-cp -p gpcard.pdf $(DESTDIR)/docs/
 	-cp -p tutorial.pdf $(DESTDIR)/docs/
 	mkdir -p $(DESTDIR)/docs/psdoc
 	cp -p $(D)psdoc/ps_file.doc $(DESTDIR)/docs/psdoc/ps_file_doc.txt

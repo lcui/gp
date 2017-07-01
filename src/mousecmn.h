@@ -1,5 +1,5 @@
 /*
- * $Id: mousecmn.h,v 1.17.2.2 2017/02/25 16:13:31 markisch Exp $
+ * $Id: mousecmn.h,v 1.19 2016/09/28 14:46:18 markisch Exp $
  */
 
 /* GNUPLOT - mousecnm.h */

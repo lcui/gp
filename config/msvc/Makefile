@@ -1,5 +1,5 @@
 #
-# $Id: Makefile,v 1.25.2.1 2017/03/04 08:17:29 markisch Exp $
+# $Id: Makefile,v 1.28 2017/04/23 18:27:53 markisch Exp $
 #
 # GNUPLOT Makefile Microsoft Visual C++ 2005 or newer
 
@@ -51,7 +51,7 @@ WXT = 0
 # Build Cairo Terminals (cairolatex, epslatex, pdflatex)
 CAIRO = 0
 # Build qt terminal?
-QT = 1
+QT = 0
 # Set to one if you have Qt5 (instead of Qt4)
 QT5 = 1
 # Build the lua/tikz terminal?
@@ -70,15 +70,12 @@ DEBUG = 0
 #LUADIR = lua
 PDFDIR = pdflib
 #QTDIR = C:\Qt\4.8.4
-!IF "$(PLATFORM)" == "X64"
-QTDIR = c:\Qt\5.8\msvc2015_64
-!ELSE
-QTDIR = c:\Qt\5.8\msvc2015_32
-!ENDIF
+QTDIR = d:\Source\Qt-5.2.1\5.2.1\msvc2012
 #CAIRODIR = cairo-pango
 #CACADIR = libcaca
 CAIRODIR = d:\msvc-libs
 LIBDIR =  d:\msvc-libs
+
 
 # installation directory
 DESTDIR = "$(PROGRAMFILES)\gnuplot"
@@ -119,25 +116,28 @@ CBASEFLAGS = /EHsc /GR /MD /O2 /nologo
 CFLAGS = $(CBASEFLAGS) /I. /I$(TOP) /I$(S) /I$(T) /D_Windows /DWIN32 /DHAVE_CONFIG_H /D__MSC__ $(OPTIONS)
 CFLAGS = $(CFLAGS) /DGNUPLOT_SHARE_DIR=\"$(GNUPLOT_SHARE_DIR)\"
 WIN_CFLAGS = /DUSE_FAKEPIPES
-CONSOLE_CFLAGS = /DWGP_CONSOLE /DCONSOLE_SWITCH_CP /DPIPES
+CONSOLE_CFLAGS = /DWGP_CONSOLE /DPIPES
 OPTIONS = /DUSE_MOUSE
 OPTIONS = $(OPTIONS) /DGNUPLOT_HISTORY
 
 EXTRA_TARGETS =
+
+VERSION_CPPFLAGS = -DVERSION_MAJOR=\"5.1\" -DPATCHLEVEL=\"0\"
 
 # flags for terminals
 # see other terminal defines in term.h
 TERMFLAGS = /I$(T) /DGNUPLOT_PS_DIR=\"$(GNUPLOT_PS_DIR)\" /DGNUPLOT_JS_DIR=\"$(GNUPLOT_JS_DIR)\"
 
 # linker flags, append paths for external libs later
-LDFLAGS = /nologo /MACHINE:$(MACHINE) /MANIFEST
-LDFLAGS = $(LDFLAGS) /MANIFESTDEPENDENCY:"type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'"
+LDFLAGS = /nologo /MACHINE:$(MACHINE)
+LDFLAGS = $(LDFLAGS) /MANIFEST:EMBED /MANIFESTINPUT:$(W)$(MANIFEST)
 !IF "$(DEBUG)" == "1"
 LDFLAGS = $(LDFLAGS) /DEBUG
 !ENDIF
 COMMONLIBS = kernel32.lib user32.lib gdi32.lib winspool.lib \
              comdlg32.lib comctl32.lib advapi32.lib shell32.lib \
-             msimg32.lib gdiplus.lib
+             msimg32.lib gdiplus.lib shlwapi.lib \
+             d2d1.lib dwrite.lib ole32.lib
 CONSOLELIBS = ole32.lib oleaut32.lib comctl32.lib
 
 !IFDEF LIBDIR
@@ -291,12 +291,12 @@ moc_QtGnuplotEvent.cpp: $(Q)QtGnuplotEvent.h
 	$(MOC) -o $@ $**
 
 gnuplot_qt.exe: ui_QtGnuplotSettings.h $(GNUPLOTQTOBJS)
-	$(LD) /entry:mainCRTStartup /subsystem:windows $(LDFLAGS) /map:gnuplot_qt.map /out:$@ $(GNUPLOTQTOBJS) $(QTLIBS) shell32.lib user32.lib
+	$(LD) /entry:mainCRTStartup /subsystem:windows $(LDFLAGS) /map:gnuplot_qt.map /out:$@ $(GNUPLOTQTOBJS) $(QTLIBS) shell32.lib
 !ENDIF
 
 WINOBJS = winmain.obj wgnuplib.obj wgraph.obj wprinter.obj wtext.obj \
 	screenbuf.obj wpause.obj wmenu.obj gpexecute.obj wgdiplus.obj \
-	wredirect.obj
+	wd2d.obj wredirect.obj
 
 ALL_CONSOLE_OBJS = $(OBJS:.obj=.cobj) $(WINOBJS:.obj=.cobj)
 
@@ -463,7 +463,7 @@ $(HELPFILE): doc2html.exe $(D)gnuplot.doc gnuplot.exe
 	if exist $(D)windows\wgnuplot.chm copy $(D)windows\wgnuplot.chm .
 
 doc2html.exe: $(D)windows\doc2html.c $(D)termdoc.c $(D)xref.c version.obj $(CORETERM)
-	$(CC) $(CFLAGS) /F 5000 /W1 /I. /DWINDOWS_NO_GUI /I$(D) /I$(T) -Fedoc2html.exe $(D)windows\doc2html.c $(D)termdoc.c $(D)xref.c version.obj
+	$(CC) $(CFLAGS) /F 5000 /W1 /I. $(VERSION_CPPFLAGS) /DWINDOWS_NO_GUI /I$(D) /I$(T) -Fedoc2html.exe $(D)windows\doc2html.c $(D)termdoc.c $(D)xref.c version.obj
 
 
 # make binary demo files

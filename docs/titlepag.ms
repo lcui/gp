@@ -7,7 +7,7 @@ An Interactive Plotting Program
 .AU
 Thomas Williams & Colin Kelley
 .br
-   Version 5.0 organized by: Ethan A Merritt and many others
+   Version 5.1 organized by: Ethan A Merritt and many others
 .br
    Major contributors (alphabetic order):
 .br
@@ -62,7 +62,7 @@ This manual was prepared by Dick Crawford.
 .LP
 .nr HM 1.2i
 .ds CH
-.ds LH GNUPLOT 5.0
+.ds LH GNUPLOT 5.1
 .ds RH %
 .\".nr PS 12
 .\".nr VS 13

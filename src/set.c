@@ -1,5 +1,5 @@
 #ifndef lint
-static char *RCSid() { return RCSid("$Id: set.c,v 1.459.2.37 2017/02/25 14:41:15 markisch Exp $"); }
+static char *RCSid() { return RCSid("$Id: set.c,v 1.558 2017/05/07 19:20:52 sfeam Exp $"); }
 #endif
 
 /* GNUPLOT - set.c */
@@ -52,6 +52,7 @@ static char *RCSid() { return RCSid("$Id: set.c,v 1.459.2.37 2017/02/25 14:41:15
 #include "gp_hist.h"
 #include "gp_time.h"
 #include "hidden3d.h"
+#include "jitter.h"
 #include "misc.h"
 #include "plot.h"
 #include "plot2d.h"
@@ -138,14 +139,15 @@ static void set_surface __PROTO((void));
 static void set_table __PROTO((void));
 static void set_terminal __PROTO((void));
 static void set_termoptions __PROTO((void));
+static void set_theta __PROTO((void));
 static void set_tics __PROTO((void));
 static void set_ticscale __PROTO((void));
 static void set_timefmt __PROTO((void));
 static void set_timestamp __PROTO((void));
 static void set_view __PROTO((void));
 static void set_zero __PROTO((void));
-static void set_timedata __PROTO((AXIS_INDEX));
-static void set_range __PROTO((AXIS_INDEX));
+static void set_timedata __PROTO((struct axis *));
+static void set_range __PROTO((struct axis *));
 static void set_paxis __PROTO((void));
 static void set_raxis __PROTO((void));
 static void set_xyplane __PROTO((void));
@@ -157,14 +159,15 @@ static void set_allzeroaxis __PROTO((void));
 /******** Local functions ********/
 
 static void set_xyzlabel __PROTO((text_label * label));
-static void load_tics __PROTO((AXIS_INDEX axis));
-static void load_tic_user __PROTO((AXIS_INDEX axis));
-static void load_tic_series __PROTO((AXIS_INDEX axis));
+static void load_tics __PROTO((struct axis * axis));
+static void load_tic_user __PROTO((struct axis * axis));
+static void load_tic_series __PROTO((struct axis * axis));
 
 static void set_linestyle __PROTO((struct linestyle_def **head, lp_class destination_class));
 static void set_arrowstyle __PROTO((void));
 static int assign_arrowstyle_tag __PROTO((void));
-static int set_tic_prop __PROTO((AXIS_INDEX));
+static int set_tic_prop __PROTO((struct axis *));
+static void set_mttics __PROTO((struct axis *this_axis));
 
 static void check_palette_grayscale __PROTO((void));
 static int set_palette_defined __PROTO((void));
@@ -173,6 +176,7 @@ static void set_palette_function __PROTO((void));
 static void parse_histogramstyle __PROTO((histogram_style *hs,
 		t_histogram_type def_type, int def_gap));
 static void set_style_parallel __PROTO((void));
+static void parse_lighting_options __PROTO((void));
 
 static const char *encoding_micro __PROTO((void));
 static const char *encoding_minus __PROTO((void));
@@ -183,7 +187,7 @@ static const struct position default_offset
 	= {character, character, character, 0., 0., 0.};
 
 static lp_style_type default_hypertext_point_style
-	= {1, LT_BLACK, 4, DASHTYPE_SOLID, 0, 1.0, PTSZ_DEFAULT, 0, {TC_RGB, 0x000000, 0.0}, DEFAULT_DASHPATTERN};
+	= {1, LT_BLACK, 4, DASHTYPE_SOLID, 0, 0, 1.0, PTSZ_DEFAULT, DEFAULT_P_CHAR, {TC_RGB, 0x000000, 0.0}, DEFAULT_DASHPATTERN};
 
 /******** The 'set' command ********/
 void
@@ -194,7 +198,8 @@ set_command()
     /* Mild form of backwards compatibility */
 	/* Allow "set no{foo}" rather than "unset foo" */
     if (gp_input_line[token[c_token].start_index] == 'n' &&
-	       gp_input_line[token[c_token].start_index+1] == 'o') {
+	       gp_input_line[token[c_token].start_index+1] == 'o' &&
+	       gp_input_line[token[c_token].start_index+2] != 'n') {
 	if (interactive)
 	    int_warn(c_token, "deprecated syntax, use \"unset\"");
 	token[c_token].start_index += 2;
@@ -296,6 +301,9 @@ set_command()
 	case S_ISOSAMPLES:
 	    set_isosamples();
 	    break;
+	case S_JITTER:
+	    set_jitter();
+	    break;
 	case S_KEY:
 	    set_key();
 	    break;
@@ -313,6 +321,7 @@ set_command()
 	    set_label();
 	    break;
 	case S_LINK:
+	case S_NONLINEAR:
 	    link_command();
 	    break;
 	case S_LOADPATH:
@@ -459,6 +468,9 @@ set_command()
 	case S_TERMOPTIONS:
 	    set_termoptions();
 	    break;
+	case S_THETA:
+	    set_theta();
+	    break;
 	case S_TICS:
 	    set_tics();
 	    break;
@@ -473,6 +485,7 @@ set_command()
 	    break;
 	case S_TITLE:
 	    set_xyzlabel(&title);
+	    title.rotate = 0.0;
 	    break;
 	case S_VIEW:
 	    set_view();
@@ -489,7 +502,7 @@ set_command()
 	case S_NOXDTICS:
 	case S_XMTICS:
 	case S_NOXMTICS:
-	    set_tic_prop(FIRST_X_AXIS);
+	    set_tic_prop(&axis_array[FIRST_X_AXIS]);
 	    break;
 	case S_MYTICS:
 	case S_NOMYTICS:
@@ -499,7 +512,7 @@ set_command()
 	case S_NOYDTICS:
 	case S_YMTICS:
 	case S_NOYMTICS:
-	    set_tic_prop(FIRST_Y_AXIS);
+	    set_tic_prop(&axis_array[FIRST_Y_AXIS]);
 	    break;
 	case S_MX2TICS:
 	case S_NOMX2TICS:
@@ -509,7 +522,7 @@ set_command()
 	case S_NOX2DTICS:
 	case S_X2MTICS:
 	case S_NOX2MTICS:
-	    set_tic_prop(SECOND_X_AXIS);
+	    set_tic_prop(&axis_array[SECOND_X_AXIS]);
 	    break;
 	case S_MY2TICS:
 	case S_NOMY2TICS:
@@ -519,7 +532,7 @@ set_command()
 	case S_NOY2DTICS:
 	case S_Y2MTICS:
 	case S_NOY2MTICS:
-	    set_tic_prop(SECOND_Y_AXIS);
+	    set_tic_prop(&axis_array[SECOND_Y_AXIS]);
 	    break;
 	case S_MZTICS:
 	case S_NOMZTICS:
@@ -529,7 +542,7 @@ set_command()
 	case S_NOZDTICS:
 	case S_ZMTICS:
 	case S_NOZMTICS:
-	    set_tic_prop(FIRST_Z_AXIS);
+	    set_tic_prop(&axis_array[FIRST_Z_AXIS]);
 	    break;
 	case S_MCBTICS:
 	case S_NOMCBTICS:
@@ -539,36 +552,40 @@ set_command()
 	case S_NOCBDTICS:
 	case S_CBMTICS:
 	case S_NOCBMTICS:
-	    set_tic_prop(COLOR_AXIS);
+	    set_tic_prop(&axis_array[COLOR_AXIS]);
 	    break;
 	case S_RTICS:
-	case S_NORTICS:
 	case S_MRTICS:
-	case S_NOMRTICS:
-	    set_tic_prop(POLAR_AXIS);
+	    set_tic_prop(&axis_array[POLAR_AXIS]);
+	    break;
+	case S_TTICS:
+	    set_tic_prop(&THETA_AXIS);
+	    break;
+	case S_MTTICS:
+	    set_mttics(&THETA_AXIS);
 	    break;
 	case S_XDATA:
-	    set_timedata(FIRST_X_AXIS);
+	    set_timedata(&axis_array[FIRST_X_AXIS]);
 	    axis_array[T_AXIS].datatype
 	      = axis_array[U_AXIS].datatype
 	      = axis_array[FIRST_X_AXIS].datatype;
 	    break;
 	case S_YDATA:
-	    set_timedata(FIRST_Y_AXIS);
+	    set_timedata(&axis_array[FIRST_Y_AXIS]);
 	    axis_array[V_AXIS].datatype
 	      = axis_array[FIRST_X_AXIS].datatype;
 	    break;
 	case S_ZDATA:
-	    set_timedata(FIRST_Z_AXIS);
+	    set_timedata(&axis_array[FIRST_Z_AXIS]);
 	    break;
 	case S_CBDATA:
-	    set_timedata(COLOR_AXIS);
+	    set_timedata(&axis_array[COLOR_AXIS]);
 	    break;
 	case S_X2DATA:
-	    set_timedata(SECOND_X_AXIS);
+	    set_timedata(&axis_array[SECOND_X_AXIS]);
 	    break;
 	case S_Y2DATA:
-	    set_timedata(SECOND_Y_AXIS);
+	    set_timedata(&axis_array[SECOND_Y_AXIS]);
 	    break;
 	case S_XLABEL:
 	    set_xyzlabel(&axis_array[FIRST_X_AXIS].label);
@@ -582,6 +599,9 @@ set_command()
 	case S_CBLABEL:
 	    set_xyzlabel(&axis_array[COLOR_AXIS].label);
 	    break;
+	case S_RLABEL:
+	    set_xyzlabel(&axis_array[POLAR_AXIS].label);
+	    break;
 	case S_X2LABEL:
 	    set_xyzlabel(&axis_array[SECOND_X_AXIS].label);
 	    break;
@@ -589,36 +609,36 @@ set_command()
 	    set_xyzlabel(&axis_array[SECOND_Y_AXIS].label);
 	    break;
 	case S_XRANGE:
-	    set_range(FIRST_X_AXIS);
+	    set_range(&axis_array[FIRST_X_AXIS]);
 	    break;
 	case S_X2RANGE:
-	    set_range(SECOND_X_AXIS);
+	    set_range(&axis_array[SECOND_X_AXIS]);
 	    break;
 	case S_YRANGE:
-	    set_range(FIRST_Y_AXIS);
+	    set_range(&axis_array[FIRST_Y_AXIS]);
 	    break;
 	case S_Y2RANGE:
-	    set_range(SECOND_Y_AXIS);
+	    set_range(&axis_array[SECOND_Y_AXIS]);
 	    break;
 	case S_ZRANGE:
-	    set_range(FIRST_Z_AXIS);
+	    set_range(&axis_array[FIRST_Z_AXIS]);
 	    break;
 	case S_CBRANGE:
-	    set_range(COLOR_AXIS);
+	    set_range(&axis_array[COLOR_AXIS]);
 	    break;
 	case S_RRANGE:
-	    set_range(POLAR_AXIS);
+	    set_range(&axis_array[POLAR_AXIS]);
 	    if (polar)
 		rrange_to_xy();
 	    break;
 	case S_TRANGE:
-	    set_range(T_AXIS);
+	    set_range(&axis_array[T_AXIS]);
 	    break;
 	case S_URANGE:
-	    set_range(U_AXIS);
+	    set_range(&axis_array[U_AXIS]);
 	    break;
 	case S_VRANGE:
-	    set_range(V_AXIS);
+	    set_range(&axis_array[V_AXIS]);
 	    break;
 	case S_PAXIS:
 	    set_paxis();
@@ -748,6 +768,7 @@ set_arrow()
 	this_arrow->start = default_position;
 	this_arrow->end = default_position;
 	this_arrow->angle = 0.0;
+	this_arrow->type = arrow_end_undefined;
 
 	default_arrow_style(&(new_arrow->arrow_properties));
     }
@@ -787,8 +808,7 @@ set_arrow()
 	    if (set_end) { duplication = TRUE; break; }
 	    this_arrow->type = arrow_end_oriented;
 	    c_token++;
-	    /* FIXME: we really only want one coordinate (length), not 3 */
-	    get_position(&this_arrow->end);
+	    get_position_default(&this_arrow->end, first_axes, 1);
 	    set_end = TRUE;
 	    continue;
 	}
@@ -837,11 +857,10 @@ assign_arrow_tag()
 
 /* helper routine for 'set autoscale' on a single axis */
 static TBOOLEAN
-set_autoscale_axis(AXIS_INDEX axis)
+set_autoscale_axis(struct axis *this)
 {
     char keyword[16];
-    AXIS *this = axis_array + axis;
-    char *name = (char *) &(axis_name(axis)[0]);
+    char *name = (char *) &(axis_name(this->index)[0]);
 
     if (equals(c_token, name)) {
 	this->set_autoscale = AUTOSCALE_BOTH;
@@ -890,11 +909,14 @@ set_autoscale_axis(AXIS_INDEX axis)
 static void
 set_autoscale()
 {
+    int axis;
+
     c_token++;
     if (END_OF_COMMAND) {
-	int axis;
 	for (axis=0; axis<AXIS_ARRAY_SIZE; axis++)
 	    axis_array[axis].set_autoscale = AUTOSCALE_BOTH;
+	for (axis=0; axis<num_parallel_axes; axis++)
+	    parallel_axis[axis].set_autoscale = AUTOSCALE_BOTH;
 	return;
     } else if (equals(c_token, "xy") || equals(c_token, "yx")) {
 	axis_array[FIRST_X_AXIS].set_autoscale =
@@ -906,32 +928,32 @@ set_autoscale()
 	c_token++;
 	return;
     } else if (equals(c_token, "fix") || almost_equals(c_token, "noext$end")) {
-	int a = 0;
-	while (a < AXIS_ARRAY_SIZE) {
-	    axis_array[a].set_autoscale |= AUTOSCALE_FIXMIN | AUTOSCALE_FIXMAX;
-	    a++;
-	}
+	for (axis=0; axis<AXIS_ARRAY_SIZE; axis++)
+	    axis_array[axis].set_autoscale |= AUTOSCALE_FIXMIN | AUTOSCALE_FIXMAX;
+	for (axis=0; axis<num_parallel_axes; axis++)
+	    parallel_axis[axis].set_autoscale |= AUTOSCALE_FIXMIN | AUTOSCALE_FIXMAX;
 	c_token++;
 	return;
     } else if (almost_equals(c_token, "ke$epfix")) {
-	int a = 0;
-	while (a < AXIS_ARRAY_SIZE)
-	    axis_array[a++].set_autoscale |= AUTOSCALE_BOTH;
+	for (axis=0; axis<AXIS_ARRAY_SIZE; axis++)
+	    axis_array[axis].set_autoscale |= AUTOSCALE_BOTH;
+	for (axis=0; axis<num_parallel_axes; axis++)
+	    parallel_axis[axis].set_autoscale |= AUTOSCALE_BOTH;
 	c_token++;
 	return;
     }
 
-    if (set_autoscale_axis(FIRST_X_AXIS)) return;
-    if (set_autoscale_axis(FIRST_Y_AXIS)) return;
-    if (set_autoscale_axis(FIRST_Z_AXIS)) return;
-    if (set_autoscale_axis(SECOND_X_AXIS)) return;
-    if (set_autoscale_axis(SECOND_Y_AXIS)) return;
-    if (set_autoscale_axis(COLOR_AXIS)) return;
-    if (set_autoscale_axis(POLAR_AXIS)) return;
+    if (set_autoscale_axis(&axis_array[FIRST_X_AXIS])) return;
+    if (set_autoscale_axis(&axis_array[FIRST_Y_AXIS])) return;
+    if (set_autoscale_axis(&axis_array[FIRST_Z_AXIS])) return;
+    if (set_autoscale_axis(&axis_array[SECOND_X_AXIS])) return;
+    if (set_autoscale_axis(&axis_array[SECOND_Y_AXIS])) return;
+    if (set_autoscale_axis(&axis_array[COLOR_AXIS])) return;
+    if (set_autoscale_axis(&axis_array[POLAR_AXIS])) return;
     /* FIXME: Do these commands make any sense? */
-    if (set_autoscale_axis(T_AXIS)) return;
-    if (set_autoscale_axis(U_AXIS)) return;
-    if (set_autoscale_axis(V_AXIS)) return;
+    if (set_autoscale_axis(&axis_array[T_AXIS])) return;
+    if (set_autoscale_axis(&axis_array[U_AXIS])) return;
+    if (set_autoscale_axis(&axis_array[V_AXIS])) return;
 
     /* come here only if nothing found: */
 	int_error(c_token, "Invalid range");
@@ -942,10 +964,29 @@ set_autoscale()
 static void
 set_bars()
 {
+    int save_token;
 
-    int save_token = ++c_token;
+    c_token++;
+
+    if (END_OF_COMMAND)
+	reset_bars();
 
     while (!END_OF_COMMAND) {
+
+	if (equals(c_token,"default")) {
+	    reset_bars();
+	    ++c_token;
+	    return;
+	}
+
+	/* Jul 2015 - allow a separate line type for error bars */
+	save_token = c_token;
+	lp_parse(&bar_lp, LP_ADHOC, FALSE);
+	if (c_token != save_token) {
+	    bar_lp.flags = LP_ERRORBAR_SET;
+	    continue;
+	}
+
 	if (almost_equals(c_token,"s$mall")) {
 	    bar_size = 0.0;
 	    ++c_token;
@@ -965,10 +1006,6 @@ set_bars()
 	    bar_size = real_expression();
 	}
     }
-
-    if (save_token == c_token)
-	bar_size = 1.0;
-
 }
 
 
@@ -977,7 +1014,7 @@ static void
 set_border()
 {
     c_token++;
-    if(END_OF_COMMAND){
+    if (END_OF_COMMAND){
 	draw_border = 31;
 	border_layer = LAYER_FRONT;
 	border_lp = default_border_lp;
@@ -992,6 +1029,9 @@ set_border()
 	    c_token++;
 	} else if (equals(c_token,"behind")) {
 	    border_layer = LAYER_BEHIND;
+	    c_token++;
+	} else if (equals(c_token,"polar")) {
+	    draw_border |= 4096;
 	    c_token++;
 	} else {
 	    int save_token = c_token;
@@ -1190,7 +1230,7 @@ set_cntrparam()
 	if (almost_equals(c_token, "di$screte")) {
 	    contour_levels_kind = LEVELS_DISCRETE;
 	    c_token++;
-	    if(END_OF_COMMAND)
+	    if (END_OF_COMMAND)
 		int_error(c_token, "expecting discrete level");
 	    else
 		*(double *)nextfrom_dynarray(&dyn_contour_levels_list) =
@@ -1215,9 +1255,9 @@ set_cntrparam()
 		int_error(c_token,
 			  "expecting comma to separate start,incr levels");
 	    c_token++;
-	    if((contour_levels_list[i++] = real_expression()) == 0)
+	    if ((contour_levels_list[i++] = real_expression()) == 0)
 		int_error(c_token, "increment cannot be 0");
-	    if(!END_OF_COMMAND) {
+	    if (!END_OF_COMMAND) {
 		if (!equals(c_token, ","))
 		    int_error(c_token,
 			      "expecting comma to separate incr,stop levels");
@@ -1231,10 +1271,10 @@ set_cntrparam()
 	} else if (almost_equals(c_token, "au$to")) {
 	    contour_levels_kind = LEVELS_AUTO;
 	    c_token++;
-	    if(!END_OF_COMMAND)
+	    if (!END_OF_COMMAND)
 		contour_levels = int_expression();
 	} else {
-	    if(contour_levels_kind == LEVELS_DISCRETE)
+	    if (contour_levels_kind == LEVELS_DISCRETE)
 		int_error(c_token, "Levels type is discrete, ignoring new number of contour levels");
 	    contour_levels = int_expression();
 	}
@@ -1481,12 +1521,12 @@ set_dgrid3d()
 			if  ( equals( c_token, "," )) {
 				c_token++;
 				token_cnt++;
-			} else if( token_cnt == 0) {
+			} else if (token_cnt == 0) {
 				gridx = int_expression();
 				gridy = gridx; /* gridy defaults to gridx, unless overridden below */
-			} else if( token_cnt == 1) {
+			} else if (token_cnt == 1) {
 				gridy = int_expression();
-			} else if( token_cnt == 2) {
+			} else if (token_cnt == 2) {
 				normval = int_expression();
 			} else
 				int_error(c_token,"Unrecognized keyword or unexpected value");
@@ -1496,15 +1536,15 @@ set_dgrid3d()
     }
 
     /* we could warn here about floating point values being truncated... */
-    if( gridx < 2 || gridx > 1000 || gridy < 2 || gridy > 1000 )
+    if (gridx < 2 || gridx > 1000 || gridy < 2 || gridy > 1000)
 	int_error( NO_CARET,
 		   "Number of grid points must be in [2:1000] - not changed!");
 
     /* no mode token found: classic format */
-    if( dgrid3d_mode == DGRID3D_DEFAULT )
+    if (dgrid3d_mode == DGRID3D_DEFAULT)
 	dgrid3d_mode = DGRID3D_QNORM;
 
-    if( scalex < 0.0 || scaley < 0.0 )
+    if (scalex < 0.0 || scaley < 0.0)
 	int_error( NO_CARET,
 		   "Scale factors must be greater than zero - not changed!" );
 
@@ -1566,7 +1606,7 @@ set_dummy()
     for (i=0; i<MAX_NUM_VAR; i++) {
 	if (END_OF_COMMAND)
 	    return;
-	if (isalpha(gp_input_line[token[c_token].start_index]))
+	if (isalpha((unsigned char)gp_input_line[token[c_token].start_index]))
 	    copy_str(set_dummy_var[i],c_token++, MAX_ID_LEN);
 	if (equals(c_token,","))
 	    c_token++;
@@ -1589,56 +1629,15 @@ set_encoding()
 	encoding = S_ENC_DEFAULT;
 #ifdef HAVE_LOCALE_H
     } else if (equals(c_token, "locale")) {
-#ifndef WIN32
-	l = setlocale(LC_CTYPE, "");
-	if (l && (strstr(l, "utf") || strstr(l, "UTF")))
-	    encoding = S_ENC_UTF8;
-	if (l && (strstr(l, "sjis") || strstr(l, "SJIS") || strstr(l, "932")))
-	    encoding = S_ENC_SJIS;
-	/* FIXME: "set encoding locale" supports only sjis and utf8 on non-Windows systems */
-#else
-	char * cp_str;
+	enum set_encoding_id newenc = encoding_from_locale();
 
 	l = setlocale(LC_CTYPE, "");
-	/* preserve locale string, skip language information */
-	cp_str = strchr(l, '.');
-	if (cp_str) {
-	    unsigned cp;
-
-	    cp_str++; /* Step past the dot in, e.g., German_Germany.1252 */
-	    cp = strtoul(cp_str, NULL, 10);
-
-	    /* The code below is the inverse to the code found in UnicodeText().
-	       For a list of code page identifiers see
-	       http://msdn.microsoft.com/en-us/library/dd317756%28v=vs.85%29.aspx
-	    */
-	    switch (cp) {
-	    case 437:   encoding = S_ENC_CP437; break;
-	    case 850:   encoding = S_ENC_CP850; break;
-	    case 852:   encoding = S_ENC_CP852; break;
-	    case 932:   encoding = S_ENC_SJIS; break;
-	    case 950:   encoding = S_ENC_CP950; break;
-	    case 1250:  encoding = S_ENC_CP1250; break;
-	    case 1251:  encoding = S_ENC_CP1251; break;
-	    case 1252:  encoding = S_ENC_CP1252; break;
-	    case 1254:  encoding = S_ENC_CP1254; break;
-	    case 20866: encoding = S_ENC_KOI8_R; break;
-	    case 21866: encoding = S_ENC_KOI8_U; break;
-	    case 28591: encoding = S_ENC_ISO8859_1; break;
-	    case 28592: encoding = S_ENC_ISO8859_2; break;
-	    case 28599: encoding = S_ENC_ISO8859_9; break;
-	    case 28605: encoding = S_ENC_ISO8859_15; break;
-	    case 65001: encoding = S_ENC_UTF8; break;
-	    case 0:
-		int_warn(NO_CARET, "Error converting locale \"%s\" to codepage number", l);
-		encoding = S_ENC_DEFAULT;
-		break;
-	    default:
-		int_warn(NO_CARET, "Locale not supported by gnuplot: %s", l);
-		encoding = S_ENC_DEFAULT;
-	    }
-	}
-#endif
+	if (newenc == S_ENC_DEFAULT)
+	    int_warn(NO_CARET, "Locale not supported by gnuplot: %s", l);
+	if (newenc == S_ENC_INVALID)
+	    int_warn(NO_CARET, "Error converting locale \"%s\" to codepage number", l);
+	else
+	    encoding = newenc;
 	c_token++;
 #endif
     } else {
@@ -1661,20 +1660,13 @@ set_encoding()
 	encoding = temp;
     }
 
-    /* Set degree sign to match encoding */
-    set_degreesign(l);
-
-    /* Set minus sign to match encoding */
-    minus_sign = encoding_minus();
-
-    /* Set micro character to match encoding */
-    micro = encoding_micro();
+    init_special_chars();
 }
 
 static void
 set_degreesign(char *locale)
 {
-#if defined(HAVE_ICONV) && !(defined WIN32)
+#if defined(HAVE_ICONV) && !(defined _WIN32)
     char degree_utf8[3] = {'\302', '\260', '\0'};
     size_t lengthin = 3;
     size_t lengthout = 8;
@@ -1766,6 +1758,25 @@ encoding_minus()
     }
 }
 
+
+void
+init_special_chars(void)
+{
+    /* Set degree sign to match encoding */
+    char * l = NULL;
+#ifdef HAVE_LOCALE_H
+    l = setlocale(LC_CTYPE, "");
+#endif
+    set_degreesign(l);
+
+    /* Set minus sign to match encoding */
+    minus_sign = encoding_minus();
+
+    /* Set micro character to match encoding */
+    micro = encoding_micro();
+}
+
+
 /* process 'set fit' command */
 static void
 set_fit()
@@ -1846,7 +1857,6 @@ set_fit()
 		value = real_expression();
 	    if ((value > 0.) && (value < 1.)) {
 		v = add_udv_by_name((char *)FITLIMIT);
-		v->udv_undef = FALSE;
 		Gcomplex(&v->udv_value, value, 0);
 	    } else {
 		del_udv_by_name((char *)FITLIMIT, FALSE);
@@ -1869,7 +1879,6 @@ set_fit()
 		maxiter = int_expression();
 	    if (maxiter > 0) {
 		v = add_udv_by_name((char *)FITMAXITER);
-		v->udv_undef = FALSE;
 		Ginteger(&v->udv_value, maxiter);
 	    } else {
 		del_udv_by_name((char *)FITMAXITER, FALSE);
@@ -1887,7 +1896,6 @@ set_fit()
 		value = real_expression();
 	    if (value > 0.) {
 		v = add_udv_by_name((char *)FITSTARTLAMBDA);
-		v->udv_undef = FALSE;
 		Gcomplex(&v->udv_value, value, 0);
 	    } else {
 		del_udv_by_name((char *)FITSTARTLAMBDA, FALSE);
@@ -1905,7 +1913,6 @@ set_fit()
 		value = real_expression();
 	    if (value > 0.) {
 		v = add_udv_by_name((char *)FITLAMBDAFACTOR);
-		v->udv_undef = FALSE;
 		Gcomplex(&v->udv_value, value, 0);
 	    } else {
 		del_udv_by_name((char *)FITLAMBDAFACTOR, FALSE);
@@ -2045,12 +2052,14 @@ set_grid()
 	else GRID_MATCH(POLAR_AXIS, "nor$tics")
 	else GRID_MATCH(POLAR_AXIS, "nomr$tics")
 	else if (almost_equals(c_token,"po$lar")) {
-	    if (!some_grid_selected())
-		axis_array[POLAR_AXIS].gridmajor = TRUE;
+	    /* Dec 2016 - zero or negative disables radial grid lines */
+	    axis_array[POLAR_AXIS].gridmajor = TRUE;	/* Enable both circles and radii */
 	    polar_grid_angle = 30*DEG2RAD;
 	    c_token++;
-	    if (isanumber(c_token) || type_udv(c_token) == INTGR || type_udv(c_token) == CMPLX)
-		polar_grid_angle = ang2rad*real_expression();
+	    if (isanumber(c_token) || type_udv(c_token) == INTGR || type_udv(c_token) == CMPLX) {
+		double ang = real_expression();
+		polar_grid_angle = (ang > 2.*M_PI) ? DEG2RAD*ang : ang2rad*ang;
+	    }
 	} else if (almost_equals(c_token,"nopo$lar")) {
 	    polar_grid_angle = 0; /* not polar grid */
 	    c_token++;
@@ -2081,6 +2090,7 @@ set_grid()
 	/* no axis specified, thus select default grid */
 	if (polar) {
 	    axis_array[POLAR_AXIS].gridmajor = TRUE;
+	    polar_grid_angle = 30.*DEG2RAD;
 	} else {
 	    axis_array[FIRST_X_AXIS].gridmajor = TRUE;
 	    axis_array[FIRST_Y_AXIS].gridmajor = TRUE;
@@ -2314,12 +2324,20 @@ set_key()
 	    if (reg_set)
 		int_warn(c_token, reg_warn);
 	    key->region = GPKEY_AUTO_INTERIOR_LRTBC;
+	    key->fixed = FALSE;
 	    reg_set = TRUE;
 	    break;
 	case S_KEY_OUTSIDE:
 	    if (reg_set)
 		int_warn(c_token, reg_warn);
 	    key->region = GPKEY_AUTO_EXTERIOR_LRTBC;
+	    reg_set = TRUE;
+	    break;
+	case S_KEY_FIXED:
+	    if (reg_set)
+		int_warn(c_token, reg_warn);
+	    key->region = GPKEY_AUTO_INTERIOR_LRTBC;
+	    key->fixed = TRUE;
 	    reg_set = TRUE;
 	    break;
 	case S_KEY_TMARGIN:
@@ -2573,7 +2591,7 @@ set_label()
 
     if (!END_OF_COMMAND) {
 	char* text;
-	parse_label_options( this_label, FALSE );
+	parse_label_options(this_label, 0);
 	text = try_to_get_string();
 	if (text) {
 	    free(this_label->text);
@@ -2583,7 +2601,7 @@ set_label()
     }
 
     /* Now parse the label format and style options */
-    parse_label_options( this_label, FALSE );
+    parse_label_options(this_label, 0);
 }
 
 
@@ -2707,13 +2725,13 @@ set_logscale()
     c_token++;
 
     if (END_OF_COMMAND) {
-	for (axis = 0; axis < LAST_REAL_AXIS; axis++)
+	for (axis = 0; axis < POLAR_AXIS; axis++)
 	    set_for_axis[axis] = TRUE;
     } else {
 	/* do reverse search because of "x", "x1", "x2" sequence in axisname_tbl */
 	int i = 0;
 	while (i < token[c_token].length) {
-	    axis = lookup_table_nth_reverse(axisname_tbl, LAST_REAL_AXIS+1,
+	    axis = lookup_table_nth_reverse(axisname_tbl, NUMBER_OF_MAIN_VISIBLE_AXES,
 		       gp_input_line + token[c_token].start_index + i);
 	    if (axis < 0) {
 		token[c_token].start_index += i;
@@ -2732,7 +2750,52 @@ set_logscale()
 	}
     }
 
-    for (axis = 0; axis <= LAST_REAL_AXIS; axis++) {
+#if defined(NONLINEAR_AXES) && (NONLINEAR_AXES > 0)
+    for (axis = 0; axis < NUMBER_OF_MAIN_VISIBLE_AXES; axis++) {
+	if (set_for_axis[axis]) {
+	    static char command[128];
+	    char *dummy;
+	    if (!isalpha(axis_name(axis)[0]))
+		continue;
+	    switch (axis) {
+	    case FIRST_Y_AXIS:
+	    case SECOND_Y_AXIS:
+		dummy = "y"; break;
+	    case FIRST_Z_AXIS:
+	    case COLOR_AXIS:
+		dummy = "z"; break;
+	    case POLAR_AXIS:
+		dummy = "r"; break;
+	    default:
+		dummy = "x"; break;
+	    }
+
+	    /* Avoid a warning message trigger by default axis range [-10:10] */
+	    if (axis_array[axis].set_min <= 0 && axis_array[axis].set_max > 0)
+		axis_array[axis].set_min = 0.1;
+
+	    if (newbase == 10.) {
+		sprintf(command, "set nonlinear %s via log10(%s) inv 10**%s",
+			axis_name(axis), dummy, dummy);
+	    } else {
+		sprintf(command, "set nonlinear %s via log(%s)/log(%g) inv (%g)**%s",
+			axis_name(axis), dummy, newbase, newbase, dummy);
+	    }
+	    do_string(command); 
+	    axis_array[axis].ticdef.logscaling = TRUE;
+	    axis_array[axis].base = newbase;
+	    axis_array[axis].log_base = log(newbase);
+	    axis_array[axis].linked_to_primary->base = newbase;
+	    axis_array[axis].linked_to_primary->log_base = log(newbase);
+
+	    /* do_string("set nonlinear") cleared the log flags */
+	    axis_array[axis].log = TRUE;
+	    axis_array[axis].linked_to_primary->log = TRUE;
+	}
+    }
+
+#else
+    for (axis = 0; axis < NUMBER_OF_MAIN_VISIBLE_AXES; axis++) {
 	if (set_for_axis[axis]) {
 	    axis_array[axis].log = TRUE;
 	    axis_array[axis].base = newbase;
@@ -2745,6 +2808,8 @@ set_logscale()
     /* Because the log scaling is applied during data input, a quick refresh */
     /* using existing stored data will not work if the log setting changes.  */
     SET_REFRESH_OK(E_REFRESH_NOT_OK, 0);
+#endif
+
 }
 
 /* process 'set mapping3d' command */
@@ -2855,15 +2920,16 @@ set_datafile_commentschars()
 	int_error(c_token, "expected string with comments chars");
 }
 
-/* process 'set missing' command */
+/* process 'set datafile missing' command */
 static void
 set_missing()
 {
     c_token++;
-    if (END_OF_COMMAND) {
-	free(missing_val);
-	missing_val = NULL;
-    } else if (equals(c_token,"NaN") || equals(c_token,"nan")) {
+    free(missing_val);
+    missing_val = NULL;
+    if (END_OF_COMMAND)
+	return;
+    if (equals(c_token,"NaN") || equals(c_token,"nan")) {
 	missing_val = strdup("NaN");
 	c_token++;
     } else if (!(missing_val = try_to_get_string()))
@@ -3256,7 +3322,7 @@ set_palette_defined()
 			    {0.5, 1, 1, 0}, {0.7, 1, 0, 0},
 			    {0.9, 0.6, 0.6, 0.6}, {1.0, 0.95, 0.95, 0.95} };
 	int i;
-	for( i=0; i<8; ++i ) {
+	for (i=0; i<8; i++) {
 	    sm_palette.gradient[i].pos = pal[i][0];
 	    sm_palette.gradient[i].col.r = pal[i][1];
 	    sm_palette.gradient[i].col.g = pal[i][2];
@@ -3384,7 +3450,6 @@ set_palette_file()
 
     i = 0;
 
-#define VCONSTRAIN(x) ( (x)<0 ? 0 : ( (x)>1 ? 1: (x) ) )
     /* values are simply clipped to [0,1] without notice */
     while ((j = df_readline(v, 4)) != DF_EOF) {
 	if (i >= actual_size) {
@@ -3396,15 +3461,15 @@ set_palette_file()
 	}
 	switch (j) {
 	    case 3:
-		sm_palette.gradient[i].col.r = VCONSTRAIN(v[0]);
-		sm_palette.gradient[i].col.g = VCONSTRAIN(v[1]);
-		sm_palette.gradient[i].col.b = VCONSTRAIN(v[2]);
+		sm_palette.gradient[i].col.r = clip_to_01(v[0]);
+		sm_palette.gradient[i].col.g = clip_to_01(v[1]);
+		sm_palette.gradient[i].col.b = clip_to_01(v[2]);
 		sm_palette.gradient[i].pos = i ;
 		break;
 	    case 4:
-		sm_palette.gradient[i].col.r = VCONSTRAIN(v[1]);
-		sm_palette.gradient[i].col.g = VCONSTRAIN(v[2]);
-		sm_palette.gradient[i].col.b = VCONSTRAIN(v[3]);
+		sm_palette.gradient[i].col.r = clip_to_01(v[1]);
+		sm_palette.gradient[i].col.g = clip_to_01(v[2]);
+		sm_palette.gradient[i].col.b = clip_to_01(v[3]);
 		sm_palette.gradient[i].pos = v[0];
 		break;
 	    default:
@@ -3414,7 +3479,6 @@ set_palette_file()
 	}
 	++i;
     }
-#undef VCONSTRAIN
     df_close();
     if (i==0)
 	int_error( c_token, "No valid palette found" );
@@ -3780,7 +3844,8 @@ set_colorbox()
 		if (END_OF_COMMAND) {
 		    int_error(c_token, "expecting screen value [0 - 1]");
 		} else {
-		    get_position_default(&color_box.origin, screen);
+		    /* FIXME: should be 2 but old save files may have 3 */
+		    get_position_default(&color_box.origin, screen, 3);
 		}
 		c_token--;
 		continue;
@@ -3790,7 +3855,8 @@ set_colorbox()
 		if (END_OF_COMMAND) {
 		    int_error(c_token, "expecting screen value [0 - 1]");
 		} else {
-		    get_position_default(&color_box.size, screen);
+		    /* FIXME: should be 2 but old save files may have 3 */
+		    get_position_default(&color_box.size, screen, 3);
 		}
 		c_token--;
 		continue;
@@ -3818,7 +3884,7 @@ set_pm3d()
     int c_token0 = ++c_token;
 
     if (END_OF_COMMAND) { /* assume default settings */
-	pm3d_reset(); /* sets pm3d.implicit to PM3D_IMPLICIT and pm3d.where to "s" */
+	pm3d_reset(); /* sets pm3d.implicit to PM3D_EXPLICIT and pm3d.where to "s" */
 	pm3d.implicit = PM3D_IMPLICIT; /* for historical reasons */
     }
     else { /* go through all options of 'set pm3d' */
@@ -3929,6 +3995,7 @@ set_pm3d()
 	    case S_PM3D_EXPLICIT: /* "e$xplicit" */
 		pm3d.implicit = PM3D_EXPLICIT;
 		continue;
+
 	    case S_PM3D_WHICH_CORNER: /* "corners2color" */
 		c_token++;
 		if (equals(c_token, "mean"))
@@ -3956,6 +4023,15 @@ set_pm3d()
 		else
 		    int_error(c_token,"expecting 'mean', 'geomean', 'harmean', 'median', 'min', 'max', 'c1', 'c2', 'c3' or 'c4'");
 		continue;
+
+	    case S_PM3D_NOLIGHTING_MODEL:
+		pm3d_shade.strength = 0.0;
+		continue;
+
+	    case S_PM3D_LIGHTING_MODEL:
+		parse_lighting_options();
+		continue;
+
 	    } /* switch over pm3d lookup table */
 	    int_error(c_token,"invalid pm3d option");
 	} /* end of while !end of command over pm3d options */
@@ -4005,8 +4081,9 @@ set_polar()
 
     if (polar)
 	return;
-    else
-	polar = TRUE;
+
+    polar = TRUE;
+    raxis = TRUE;
 
     if (!parametric) {
 	if (interactive)
@@ -4193,7 +4270,7 @@ set_obj(int tag, int obj_type)
 			get_position(&this_rect->tr);
 		    } else if (equals(c_token,"rto")) {
 			c_token++;
-			get_position_default(&this_rect->tr,this_rect->bl.scalex);
+			get_position_default(&this_rect->tr, this_rect->bl.scalex, 2);
 			if (this_rect->bl.scalex != this_rect->tr.scalex
 			||  this_rect->bl.scaley != this_rect->tr.scaley)
 			    int_error(c_token,"relative coordinates must match in type");
@@ -4326,7 +4403,7 @@ set_obj(int tag, int obj_type)
 			} else /* "rto" */ {
 			    int v = this_polygon->type;
 			    get_position_default(&this_polygon->vertex[v],
-						  this_polygon->vertex->scalex);
+						  this_polygon->vertex->scalex, 2);
 			    if (this_polygon->vertex[v].scalex != this_polygon->vertex[v-1].scalex
 			    ||  this_polygon->vertex[v].scaley != this_polygon->vertex[v-1].scaley)
 				int_error(c_token,"relative coordinates must match in type");
@@ -4652,15 +4729,35 @@ set_style()
 		    break;
 		}
 		textbox_opts.xmargin = real(const_express(&a));
+		if (textbox_opts.xmargin < 0)
+		    textbox_opts.xmargin = 0;
 		if (!equals(c_token++,",") || END_OF_COMMAND)
 		    break;
 		textbox_opts.ymargin = real(const_express(&a));
+		if (textbox_opts.ymargin < 0)
+		    textbox_opts.ymargin = 0;
+	    } else if (almost_equals(c_token,"fillc$olor") || equals(c_token,"fc")) {
+		parse_colorspec(&textbox_opts.fillcolor, TC_RGB);
 	    } else if (almost_equals(c_token,"nobo$rder")) {
 		c_token++;
 		textbox_opts.noborder = TRUE;
-	    } else if (almost_equals(c_token,"bo$rder")) {
+		textbox_opts.border_color.type = TC_LT;
+		textbox_opts.border_color.lt = LT_NODRAW;
+	    } else if (almost_equals(c_token,"bo$rdercolor")) {
 		c_token++;
 		textbox_opts.noborder = FALSE;
+		textbox_opts.border_color.type = TC_LT;
+		textbox_opts.border_color.lt = LT_BLACK;
+		if (END_OF_COMMAND)
+		    continue;
+		if (equals(c_token,"lt"))
+		    c_token--;
+		parse_colorspec(&textbox_opts.border_color, TC_RGB);
+	    } else if (almost_equals(c_token,"linew$idth") || equals(c_token,"lw")) {
+		c_token++;
+		textbox_opts.linewidth = real_expression();
+		if (textbox_opts.linewidth < 0)
+		    textbox_opts.linewidth = 1.0;
 	    } else
 		int_error(c_token,"unrecognized option");
 	}
@@ -4712,8 +4809,7 @@ static void
 set_table()
 {
     char *tablefile;
-
-    c_token++;
+    int filename_token = ++c_token;
 
     if (table_outfile) {
 	fclose(table_outfile);
@@ -4724,18 +4820,22 @@ set_table()
     if (equals(c_token, "$") && isletter(c_token + 1)) { /* datablock */
 	/* NB: has to come first because try_to_get_string will choke on the datablock name */
 	table_var = add_udv_by_name(parse_datablock_name());
-	if (!table_var->udv_undef) {
-	    gpfree_string(&table_var->udv_value);
-	    gpfree_datablock(&table_var->udv_value);
-	}
+	gpfree_string(&table_var->udv_value);
+	gpfree_datablock(&table_var->udv_value);
 	table_var->udv_value.type = DATABLOCK;
 	table_var->udv_value.v.data_array = NULL;
-	table_var->udv_undef = FALSE;
 
     } else if ((tablefile = try_to_get_string())) {  /* file name */
 	/* 'set table "foo"' creates a new output file */
-	if (!(table_outfile = fopen(tablefile, "w")))
-	   os_error(c_token, "cannot open table output file");
+	/* 'set table "foo" append' writes to the end of an existing output file */
+	TBOOLEAN append = FALSE;
+	gp_expand_tilde(&tablefile);
+	if (equals(c_token,"append")) {
+	    c_token++;
+	    append = TRUE;
+	}
+	if (!(table_outfile = fopen(tablefile, (append ? "a" : "w"))))
+	   os_error(filename_token, "cannot open table output file");
 	free(tablefile);
     }
 
@@ -4831,6 +4931,14 @@ set_termoptions()
 	    c_token++;
 	    real_expression();   /* Silently ignore the request */
 	}
+    } else if (equals(c_token,"pointscale") || equals(c_token,"ps")) {
+	num_tokens = GPMIN(num_tokens,c_token+2);
+	if (term->flags & TERM_POINTSCALE)
+	    ok_to_call_terminal = TRUE;
+	else {
+	    c_token++;
+	    real_expression();   /* Silently ignore the request */
+	}
     } else if (equals(c_token,"lw") || almost_equals(c_token,"linew$idth")) {
 	num_tokens = GPMIN(num_tokens,c_token+2);
 	if (term->flags & TERM_LINEWIDTH)
@@ -4860,6 +4968,29 @@ set_termoptions()
     num_tokens = save_end_of_line;
 }
 
+/* Various properties of the theta axis in polar mode */
+static void
+set_theta()
+{
+    c_token++;
+    while (!END_OF_COMMAND) {
+	if (almost_equals(c_token, "r$ight"))
+	    theta_origin = 0.0;
+	else if (almost_equals(c_token, "t$op"))
+	    theta_origin = 90.0;
+	else if (almost_equals(c_token, "l$eft"))
+	    theta_origin = 180.0;
+	else if (almost_equals(c_token, "b$ottom"))
+	    theta_origin = -90.;
+	else if (equals(c_token, "clockwise") || equals(c_token, "cw"))
+	    theta_direction = -1;
+	else if (equals(c_token, "counterclockwise") || equals(c_token, "ccw"))
+	    theta_direction = 1;
+	else
+	    int_error(c_token,"unrecognized option");
+	c_token++;
+    }
+}
 
 /* process 'set tics' command */
 static void
@@ -4928,20 +5059,20 @@ set_tics()
 	    ++c_token;
 	} else if (almost_equals(c_token, "l$eft")) {
 	    for (i = 0; i < AXIS_ARRAY_SIZE; ++i) {
-		axis_array[i].label.pos = LEFT;
+		axis_array[i].tic_pos = LEFT;
 		axis_array[i].manual_justify = TRUE;
 	    }
 	    c_token++;
 	} else if (almost_equals(c_token, "c$entre")
 		|| almost_equals(c_token, "c$enter")) {
 	    for (i = 0; i < AXIS_ARRAY_SIZE; ++i) {
-		axis_array[i].label.pos = CENTRE;
+		axis_array[i].tic_pos = CENTRE;
 		axis_array[i].manual_justify = TRUE;
 	    }
 	    c_token++;
 	} else if (almost_equals(c_token, "ri$ght")) {
 	    for (i = 0; i < AXIS_ARRAY_SIZE; ++i) {
-		axis_array[i].label.pos = RIGHT;
+		axis_array[i].tic_pos = RIGHT;
 		axis_array[i].manual_justify = TRUE;
 	    }
 	    c_token++;
@@ -4952,7 +5083,7 @@ set_tics()
 	} else if (almost_equals(c_token, "off$set")) {
 	    struct position lpos;
 	    ++c_token;
-	    get_position_default(&lpos, character);
+	    get_position_default(&lpos, character, 3);
 	    for (i = 0; i < AXIS_ARRAY_SIZE; ++i)
 		axis_array[i].ticdef.offset = lpos;
 	} else if (almost_equals(c_token, "nooff$set")) {
@@ -5130,18 +5261,18 @@ set_timestamp()
 	}
 
 	if (almost_equals(c_token,"r$otate")) {
-	    timelabel_rotate = TRUE;
+	    timelabel.rotate = TEXT_VERTICAL;
 	    c_token++;
 	    continue;
 	} else if (almost_equals(c_token, "n$orotate")) {
-	    timelabel_rotate = FALSE;
+	    timelabel.rotate = 0;
 	    c_token++;
 	    continue;
 	}
 
 	if (almost_equals(c_token,"off$set")) {
 	    c_token++;
-	    get_position_default(&(timelabel.offset),character);
+	    get_position_default(&(timelabel.offset), character, 3);
 	    continue;
 	}
 
@@ -5172,7 +5303,10 @@ set_timestamp()
 
     if (!(timelabel.text))
 	timelabel.text = gp_strdup(DEFAULT_TIMESTAMP_FORMAT);
-
+    if (timelabel.rotate && !timelabel_bottom)
+	timelabel.pos = RIGHT;
+    else
+	timelabel.pos = LEFT;
 }
 
 
@@ -5214,6 +5348,12 @@ set_view()
     } else if (almost_equals(c_token,"noequal$_axes")) {
 	aspect_ratio_3D = 0;
 	c_token++;
+	return;
+    }
+
+    if (equals(c_token,"azimuth")) {
+	c_token++;
+	azimuth = real_expression();
 	return;
     }
 
@@ -5264,80 +5404,74 @@ set_zero()
 
 /* process 'set {x|y|z|x2|y2}data' command */
 static void
-set_timedata(AXIS_INDEX axis)
+set_timedata(struct axis *this_axis)
 {
     c_token++;
-    axis_array[axis].datatype = DT_NORMAL;
+    this_axis->datatype = DT_NORMAL;
     if (almost_equals(c_token,"t$ime")) {
-	axis_array[axis].datatype = DT_TIMEDATE;
+	this_axis->datatype = DT_TIMEDATE;
 	c_token++;
     } else if (almost_equals(c_token,"geo$graphic")) {
-	axis_array[axis].datatype = DT_DMS;
+	this_axis->datatype = DT_DMS;
 	c_token++;
     }
     /* FIXME: this provides approximate backwards compatibility */
     /*        but may be more trouble to explain than it's worth */
-    axis_array[axis].tictype = axis_array[axis].datatype;
+    this_axis->tictype = this_axis->datatype;
 }
 
 
 static void
-set_range(AXIS_INDEX axis)
+set_range(struct axis *this_axis)
 {
     c_token++;
 
-    /* If this is a secondary axis linked to the primary, ignore the command */
-    if (axis_array[axis].linked_to_primary) {
-	while (!END_OF_COMMAND)
-	    c_token++;
-	return;
-    }
-
     if (almost_equals(c_token,"re$store")) {
 	c_token++;
-	axis_array[axis].set_min = get_writeback_min(axis);
-	axis_array[axis].set_max = get_writeback_max(axis);
-	axis_array[axis].set_autoscale = AUTOSCALE_NONE;
+	this_axis->set_min = this_axis->writeback_min;
+	this_axis->set_max = this_axis->writeback_max;
+	this_axis->set_autoscale = AUTOSCALE_NONE;
     } else {
 	if (!equals(c_token,"["))
 	    int_error(c_token, "expecting '[' or 'restore'");
 	c_token++;
-	axis_array[axis].set_autoscale =
-	    load_range(axis,
-		       &axis_array[axis].set_min,&axis_array[axis].set_max,
-		       axis_array[axis].set_autoscale);
+	this_axis->set_autoscale =
+	    load_range(this_axis,
+		       &this_axis->set_min, &this_axis->set_max,
+		       this_axis->set_autoscale);
 	if (!equals(c_token,"]"))
 	    int_error(c_token, "expecting ']'");
 	c_token++;
 	while (!END_OF_COMMAND) {
 	    if (almost_equals(c_token, "rev$erse")) {
 		++c_token;
-		axis_array[axis].range_flags |= RANGE_IS_REVERSED;
+		this_axis->range_flags |= RANGE_IS_REVERSED;
 	    } else if (almost_equals(c_token, "norev$erse")) {
 		++c_token;
-		axis_array[axis].range_flags &= ~RANGE_IS_REVERSED;
+		this_axis->range_flags &= ~RANGE_IS_REVERSED;
 	    } else if (almost_equals(c_token, "wr$iteback")) {
 		++c_token;
-		axis_array[axis].range_flags |= RANGE_WRITEBACK;
+		this_axis->range_flags |= RANGE_WRITEBACK;
 	    } else if (almost_equals(c_token, "nowri$teback")) {
 		++c_token;
-		axis_array[axis].range_flags &= ~RANGE_WRITEBACK;
+		this_axis->range_flags &= ~RANGE_WRITEBACK;
 	    } else if (almost_equals(c_token, "ext$end")) {
 		++c_token;
-		axis_array[axis].set_autoscale &= ~(AUTOSCALE_FIXMIN | AUTOSCALE_FIXMAX);
+		this_axis->set_autoscale &= ~(AUTOSCALE_FIXMIN | AUTOSCALE_FIXMAX);
 	    } else if (almost_equals(c_token, "noext$end")) {
 		++c_token;
-		axis_array[axis].set_autoscale |= AUTOSCALE_FIXMIN | AUTOSCALE_FIXMAX;
+		this_axis->set_autoscale |= AUTOSCALE_FIXMIN | AUTOSCALE_FIXMAX;
 	    } else
 		int_error(c_token,"unrecognized option");
 	}
     }
 
-    /* If there is a secondary axis linked to this one, */
-    /* replicate the new range information to it.       */
-    if ((axis == FIRST_X_AXIS || axis == FIRST_Y_AXIS)
-    &&  (axis_array[axis + SECOND_AXES].linked_to_primary))
-	    clone_linked_axes(axis + SECOND_AXES, axis);
+    /* If this is one end of a linked axis pair, replicate the new range to the	*/
+    /* linked axis, possibly via a mapping function. 				*/
+    if (this_axis->linked_to_secondary)
+	clone_linked_axes(this_axis, this_axis->linked_to_secondary);
+    else if (this_axis->linked_to_primary)
+	clone_linked_axes(this_axis, this_axis->linked_to_primary);
 }
 
 /*
@@ -5351,12 +5485,14 @@ set_paxis()
     p = int_expression();
 
     if (p <= 0 || p > MAX_PARALLEL_AXES)
-	int_error(c_token-1, "expecting parallel axis number 1 - %d",MAX_PARALLEL_AXES);
+	int_error(c_token-1, "illegal paxis");
+    if (p > num_parallel_axes)
+	extend_parallel_axis(p);
 
     if (equals(c_token, "range"))
-	set_range(PARALLEL_AXES+p-1);
+	set_range( &parallel_axis[p-1] );
     else if (almost_equals(c_token, "tic$s"))
-	set_tic_prop(PARALLEL_AXES+p-1);
+	set_tic_prop( &parallel_axis[p-1] );
     else
 	int_error(c_token, "expecting 'range' or 'tics'");
 }
@@ -5399,103 +5535,105 @@ set_allzeroaxis()
 
 /* Implements 'set tics' 'set xtics' 'set ytics' etc */
 static int
-set_tic_prop(AXIS_INDEX axis)
+set_tic_prop(struct axis *this_axis)
 {
     int match = 0;		/* flag, set by matching a tic command */
     char nocmd[12];		/* fill w/ "no"+axis_name+suffix */
     char *cmdptr = NULL, *sfxptr = NULL;
+    AXIS_INDEX axis = this_axis->index;
 
-    if (axis < PARALLEL_AXES) {
+    if (axis < NUMBER_OF_MAIN_VISIBLE_AXES) {
 	(void) strcpy(nocmd, "no");
 	cmdptr = &nocmd[2];
 	(void) strcpy(cmdptr, axis_name(axis));
 	sfxptr = &nocmd[strlen(nocmd)];
 	(void) strcpy(sfxptr, "t$ics");	/* STRING */
     }
+    if (axis == THETA_AXIS.index)
+	cmdptr = "ttics";
 
     if (almost_equals(c_token, cmdptr) || axis >= PARALLEL_AXES) {
 	TBOOLEAN axisset = FALSE;
 	TBOOLEAN mirror_opt = FALSE; /* set to true if (no)mirror option specified) */
-	axis_array[axis].ticdef.def.mix = FALSE;
+	this_axis->ticdef.def.mix = FALSE;
 	match = 1;
 	++c_token;
 	do {
 	    if (almost_equals(c_token, "ax$is")) {
 		axisset = TRUE;
-		axis_array[axis].ticmode &= ~TICS_ON_BORDER;
-		axis_array[axis].ticmode |= TICS_ON_AXIS;
+		this_axis->ticmode &= ~TICS_ON_BORDER;
+		this_axis->ticmode |= TICS_ON_AXIS;
 		++c_token;
 	    } else if (almost_equals(c_token, "bo$rder")) {
-		axis_array[axis].ticmode &= ~TICS_ON_AXIS;
-		axis_array[axis].ticmode |= TICS_ON_BORDER;
+		this_axis->ticmode &= ~TICS_ON_AXIS;
+		this_axis->ticmode |= TICS_ON_BORDER;
 		++c_token;
 	    } else if (almost_equals(c_token, "mi$rror")) {
-		axis_array[axis].ticmode |= TICS_MIRROR;
+		this_axis->ticmode |= TICS_MIRROR;
 		mirror_opt = TRUE;
 		++c_token;
 	    } else if (almost_equals(c_token, "nomi$rror")) {
-		axis_array[axis].ticmode &= ~TICS_MIRROR;
+		this_axis->ticmode &= ~TICS_MIRROR;
 		mirror_opt = TRUE;
 		++c_token;
 	    } else if (almost_equals(c_token, "in$wards")) {
-		axis_array[axis].tic_in = TRUE;
+		this_axis->tic_in = TRUE;
 		++c_token;
 	    } else if (almost_equals(c_token, "out$wards")) {
-		axis_array[axis].tic_in = FALSE;
+		this_axis->tic_in = FALSE;
 		++c_token;
 	    } else if (almost_equals(c_token, "sc$ale")) {
 		++c_token;
 		if (almost_equals(c_token, "def$ault")) {
-		    axis_array[axis].ticscale = 1.0;
-		    axis_array[axis].miniticscale = 0.5;
+		    this_axis->ticscale = 1.0;
+		    this_axis->miniticscale = 0.5;
 		    ++c_token;
 		} else {
-		    axis_array[axis].ticscale = real_expression();
+		    this_axis->ticscale = real_expression();
 		    if (equals(c_token, ",")) {
 			++c_token;
-			axis_array[axis].miniticscale = real_expression();
+			this_axis->miniticscale = real_expression();
 		    } else
-			axis_array[axis].miniticscale =
-			    0.5 * axis_array[axis].ticscale;
+			this_axis->miniticscale = 0.5 * this_axis->ticscale;
 		}
 	    } else if (almost_equals(c_token, "ro$tate")) {
-		axis_array[axis].tic_rotate = TEXT_VERTICAL;
+		this_axis->tic_rotate = TEXT_VERTICAL;
 		++c_token;
 		if (equals(c_token, "by")) {
 		    c_token++;
-		    axis_array[axis].tic_rotate = int_expression();
+		    this_axis->tic_rotate = int_expression();
 		}
 	    } else if (almost_equals(c_token, "noro$tate")) {
-		axis_array[axis].tic_rotate = 0;
+		this_axis->tic_rotate = 0;
 		++c_token;
 	    } else if (almost_equals(c_token, "off$set")) {
 		++c_token;
-		get_position_default(&axis_array[axis].ticdef.offset,
-				     character);
+		get_position_default(&this_axis->ticdef.offset,
+				     character, 3);
 	    } else if (almost_equals(c_token, "nooff$set")) {
 		++c_token;
-		axis_array[axis].ticdef.offset = default_offset;
+		this_axis->ticdef.offset = default_offset;
 	    } else if (almost_equals(c_token, "l$eft")) {
-		axis_array[axis].label.pos = LEFT;
-		axis_array[axis].manual_justify = TRUE;
+		this_axis->tic_pos = LEFT;
+		this_axis->manual_justify = TRUE;
 		c_token++;
 	    } else if (almost_equals(c_token, "c$entre")
 		       || almost_equals(c_token, "c$enter")) {
-		axis_array[axis].label.pos = CENTRE;
-		axis_array[axis].manual_justify = TRUE;
+		this_axis->tic_pos = CENTRE;
+		this_axis->manual_justify = TRUE;
 		c_token++;
 	    } else if (almost_equals(c_token, "ri$ght")) {
-		axis_array[axis].label.pos = RIGHT;
-		axis_array[axis].manual_justify = TRUE;
+		this_axis->tic_pos = RIGHT;
+		this_axis->manual_justify = TRUE;
 		c_token++;
 	    } else if (almost_equals(c_token, "autoj$ustify")) {
-		axis_array[axis].manual_justify = FALSE;
+		this_axis->manual_justify = FALSE;
 		c_token++;
 	    } else if (almost_equals(c_token,"range$limited")) {
-		axis_array[axis].ticdef.rangelimited = TRUE;
+		this_axis->ticdef.rangelimited = TRUE;
 		++c_token;
 	    } else if (almost_equals(c_token,"norange$limited")) {
-		axis_array[axis].ticdef.rangelimited = FALSE;
+		this_axis->ticdef.rangelimited = FALSE;
 		++c_token;
 	    } else if (almost_equals(c_token, "f$ont")) {
 		++c_token;
@@ -5503,74 +5641,82 @@ set_tic_prop(AXIS_INDEX axis)
 		if (!isstringvalue(c_token))
 		    int_error(c_token,"expected font");
 		else {
-		    free(axis_array[axis].ticdef.font);
-		    axis_array[axis].ticdef.font = NULL;
-		    axis_array[axis].ticdef.font = try_to_get_string();
+		    free(this_axis->ticdef.font);
+		    this_axis->ticdef.font = NULL;
+		    this_axis->ticdef.font = try_to_get_string();
 		}
 
 	    /* The geographic/timedate/numeric options are new in version 5 */
 	    } else if (almost_equals(c_token,"geo$graphic")) {
 		++c_token;
-		axis_array[axis].tictype = DT_DMS;
+		this_axis->tictype = DT_DMS;
 	    } else if (almost_equals(c_token,"time$date")) {
 		++c_token;
-		axis_array[axis].tictype = DT_TIMEDATE;
+		this_axis->tictype = DT_TIMEDATE;
 	    } else if (almost_equals(c_token,"numeric")) {
 		++c_token;
-		axis_array[axis].tictype = DT_NORMAL;
+		this_axis->tictype = DT_NORMAL;
 
 	    } else if (equals(c_token,"format")) {
 		char *format;
 		++c_token;
 		if (!((format = try_to_get_string())))
 		    int_error(c_token,"expected format");
-		free(axis_array[axis].formatstring);
-		axis_array[axis].formatstring  = format;
+		free(this_axis->formatstring);
+		this_axis->formatstring  = format;
 	    } else if (almost_equals(c_token, "enh$anced")) {
 		++c_token;
-		axis_array[axis].ticdef.enhanced = TRUE;
+		this_axis->ticdef.enhanced = TRUE;
 	    } else if (almost_equals(c_token, "noenh$anced")) {
 		++c_token;
-		axis_array[axis].ticdef.enhanced = FALSE;
+		this_axis->ticdef.enhanced = FALSE;
 	    } else if (equals(c_token,"tc") ||
 		       almost_equals(c_token,"text$color")) {
-		parse_colorspec(&axis_array[axis].ticdef.textcolor,
+		parse_colorspec(&this_axis->ticdef.textcolor,
 				axis == FIRST_Z_AXIS ? TC_Z : TC_FRAC);
 	    } else if (almost_equals(c_token, "au$tofreq")) {
 		/* auto tic interval */
 		++c_token;
-		if (!axis_array[axis].ticdef.def.mix) {
-		    free_marklist(axis_array[axis].ticdef.def.user);
-		    axis_array[axis].ticdef.def.user = NULL;
+		if (!this_axis->ticdef.def.mix) {
+		    free_marklist(this_axis->ticdef.def.user);
+		    this_axis->ticdef.def.user = NULL;
 		}
-		axis_array[axis].ticdef.type = TIC_COMPUTED;
+		this_axis->ticdef.type = TIC_COMPUTED;
+#ifdef NONLINEAR_AXES
+	    } else if (almost_equals(c_token, "log$scale")) {
+		++c_token;
+		this_axis->ticdef.logscaling = TRUE;
+	    } else if (almost_equals(c_token, "nolog$scale")) {
+		++c_token;
+		this_axis->ticdef.logscaling = FALSE;
+#endif
 	    } else if (equals(c_token,"add")) {
 		++c_token;
-		axis_array[axis].ticdef.def.mix = TRUE;
+		this_axis->ticdef.def.mix = TRUE;
 	    } else if (!END_OF_COMMAND) {
-		load_tics(axis);
+		load_tics(this_axis);
 	    }
 	} while (!END_OF_COMMAND);
 
 	/* if tics are off and not set by axis, reset to default (border) */
-	if (((axis_array[axis].ticmode & TICS_MASK) == NO_TICS) && (!axisset)) {
+	if (((this_axis->ticmode & TICS_MASK) == NO_TICS) && (!axisset)) {
 	    if (axis >= PARALLEL_AXES)
-		axis_array[axis].ticmode |= TICS_ON_AXIS;
+		this_axis->ticmode |= TICS_ON_AXIS;
 	    else
-		axis_array[axis].ticmode |= TICS_ON_BORDER;
+		this_axis->ticmode |= TICS_ON_BORDER;
 	    if ((mirror_opt == FALSE) && ((axis == FIRST_X_AXIS) || (axis == FIRST_Y_AXIS) || (axis == COLOR_AXIS))) {
-		axis_array[axis].ticmode |= TICS_MIRROR;
+		this_axis->ticmode |= TICS_MIRROR;
 	    }
 	}
 
     }
 
-    /* The remaining command options cannot work for parallel axes */
-    if (axis >= PARALLEL_AXES)
+    /* The remaining command options cannot work for parametric or parallel axes */
+    if (axis >= NUMBER_OF_MAIN_VISIBLE_AXES)
 	return match;
 
     if (almost_equals(c_token, nocmd)) {	/* NOSTRING */
-	axis_array[axis].ticmode &= ~TICS_MASK;
+	this_axis->ticmode &= ~TICS_MASK;
 	c_token++;
 	match = 1;
     }
@@ -5579,31 +5725,31 @@ set_tic_prop(AXIS_INDEX axis)
 
     (void) strcpy(sfxptr, "m$tics");	/* MONTH */
     if (almost_equals(c_token, cmdptr)) {
-	if (!axis_array[axis].ticdef.def.mix) {
-	    free_marklist(axis_array[axis].ticdef.def.user);
-	    axis_array[axis].ticdef.def.user = NULL;
+	if (!this_axis->ticdef.def.mix) {
+	    free_marklist(this_axis->ticdef.def.user);
+	    this_axis->ticdef.def.user = NULL;
 	}
-	axis_array[axis].ticdef.type = TIC_MONTH;
+	this_axis->ticdef.type = TIC_MONTH;
 	++c_token;
 	match = 1;
     }
     if (almost_equals(c_token, nocmd)) {	/* NOMONTH */
-	axis_array[axis].ticdef.type = TIC_COMPUTED;
+	this_axis->ticdef.type = TIC_COMPUTED;
 	++c_token;
 	match = 1;
     }
     (void) strcpy(sfxptr, "d$tics");	/* DAYS */
     if (almost_equals(c_token, cmdptr)) {
 	match = 1;
-	if (!axis_array[axis].ticdef.def.mix) {
-	    free_marklist(axis_array[axis].ticdef.def.user);
-	    axis_array[axis].ticdef.def.user = NULL;
+	if (!this_axis->ticdef.def.mix) {
+	    free_marklist(this_axis->ticdef.def.user);
+	    this_axis->ticdef.def.user = NULL;
 	}
-	axis_array[axis].ticdef.type = TIC_DAY;
+	this_axis->ticdef.type = TIC_DAY;
 	++c_token;
     }
     if (almost_equals(c_token, nocmd)) {	/* NODAYS */
-	axis_array[axis].ticdef.type = TIC_COMPUTED;
+	this_axis->ticdef.type = TIC_COMPUTED;
 	++c_token;
 	match = 1;
     }
@@ -5615,27 +5761,52 @@ set_tic_prop(AXIS_INDEX axis)
 	c_token++;
 	match = 1;
 	if (END_OF_COMMAND) {
-	    axis_array[axis].minitics = MINI_AUTO;
+	    this_axis->minitics = MINI_AUTO;
 	} else if (almost_equals(c_token, "def$ault")) {
-	    axis_array[axis].minitics = MINI_DEFAULT;
+	    this_axis->minitics = MINI_DEFAULT;
 	    ++c_token;
 	} else {
 	    int freq = int_expression();
 	    if (freq > 0 && freq < 101) {
-		axis_array[axis].mtic_freq = freq;
-		axis_array[axis].minitics = MINI_USER;
+		this_axis->mtic_freq = freq;
+		this_axis->minitics = MINI_USER;
 	    } else {
-		axis_array[axis].minitics = MINI_DEFAULT;
+		this_axis->minitics = MINI_DEFAULT;
 		int_warn(c_token-1,"Expecting number of intervals");
 	    }
 	}
     }
     if (almost_equals(c_token, nocmd)) {	/* NOMINI */
-	axis_array[axis].minitics = MINI_OFF;
+	this_axis->minitics = MINI_OFF;
 	c_token++;
 	match = 1;
     }
     return (match);
+}
+
+/*
+ * minor tics around perimeter of polar grid circle (theta).
+ * This version works like other axes (parameter is # of subintervals)
+ * but it might be more reasonable to simply take increment in degress.
+ */
+static void
+set_mttics(struct axis *this_axis)
+{
+    c_token++;
+
+    if (END_OF_COMMAND) {
+	this_axis->minitics = MINI_AUTO;
+	++c_token;
+    } else {
+	int freq = int_expression();
+	if (freq > 0 && freq < 361) {
+	    this_axis->mtic_freq = freq;
+	    this_axis->minitics = MINI_USER;
+	} else {
+	    this_axis->minitics = MINI_AUTO;
+	    int_warn(c_token-1,"Expecting number of intervals");
+	}
+    }
 }
 
 /* process a 'set {x/y/z}label command */
@@ -5652,7 +5823,7 @@ set_xyzlabel(text_label *label)
 	return;
     }
 
-    parse_label_options(label, FALSE);
+    parse_label_options(label, 0);
 
     if (!END_OF_COMMAND) {
 	text = try_to_get_string();
@@ -5662,7 +5833,7 @@ set_xyzlabel(text_label *label)
 	}
     }
 
-    parse_label_options(label, FALSE);
+    parse_label_options(label, 0);
 
 }
 
@@ -5829,13 +6000,13 @@ assign_arrowstyle_tag()
 
 /* For set [xy]tics... command */
 static void
-load_tics(AXIS_INDEX axis)
+load_tics(struct axis *this_axis)
 {
     if (equals(c_token, "(")) {	/* set : TIC_USER */
 	c_token++;
-	load_tic_user(axis);
+	load_tic_user(this_axis);
     } else {			/* series : TIC_SERIES */
-	load_tic_series(axis);
+	load_tic_series(this_axis);
     }
 }
 
@@ -5845,21 +6016,21 @@ load_tics(AXIS_INDEX axis)
  * Left paren is already scanned off before entry.
  */
 static void
-load_tic_user(AXIS_INDEX axis)
+load_tic_user(struct axis *this_axis)
 {
     char *ticlabel;
     double ticposition;
 
     /* Free any old tic labels */
-    if (!axis_array[axis].ticdef.def.mix && !(set_iterator && set_iterator->iteration)) {
-	free_marklist(axis_array[axis].ticdef.def.user);
-	axis_array[axis].ticdef.def.user = NULL;
+    if (!this_axis->ticdef.def.mix && !(set_iterator && set_iterator->iteration)) {
+	free_marklist(this_axis->ticdef.def.user);
+	this_axis->ticdef.def.user = NULL;
     }
 
     /* Mark this axis as user-generated ticmarks only, unless the */
     /* mix flag indicates that both user- and auto- tics are OK.  */
-    if (!axis_array[axis].ticdef.def.mix)
-	axis_array[axis].ticdef.type = TIC_USER;
+    if (!this_axis->ticdef.def.mix)
+	this_axis->ticdef.type = TIC_USER;
 
     while (!END_OF_COMMAND && !equals(c_token,")")) {
 	int ticlevel=0;
@@ -5872,7 +6043,7 @@ load_tic_user(AXIS_INDEX axis)
 	/* has a string with it? */
 	save_token = c_token;
 	ticlabel = try_to_get_string();
-	if (ticlabel && axis_array[axis].datatype == DT_TIMEDATE
+	if (ticlabel && this_axis->datatype == DT_TIMEDATE
 	    && (equals(c_token,",") || equals(c_token,")"))) {
 	    c_token = save_token;
 	    free(ticlabel);
@@ -5880,7 +6051,7 @@ load_tic_user(AXIS_INDEX axis)
 	}
 
 	/* in any case get the value */
-	GET_NUM_OR_TIME(ticposition, axis);
+	ticposition = get_num_or_time(this_axis);
 
 	if (!END_OF_COMMAND &&
 	    !equals(c_token, ",") &&
@@ -5889,7 +6060,7 @@ load_tic_user(AXIS_INDEX axis)
 	}
 
 	/* add to list */
-	add_tic_user(axis, ticlabel, ticposition, ticlevel);
+	add_tic_user(this_axis, ticlabel, ticposition, ticlevel);
 	free(ticlabel);
 
 	/* expect "," or ")" here */
@@ -5900,8 +6071,8 @@ load_tic_user(AXIS_INDEX axis)
     }
 
     if (END_OF_COMMAND || !equals(c_token, ")")) {
-	free_marklist(axis_array[axis].ticdef.def.user);
-	axis_array[axis].ticdef.def.user = NULL;
+	free_marklist(this_axis->ticdef.def.user);
+	this_axis->ticdef.def.user = NULL;
 	int_error(c_token, "expecting right parenthesis )");
     }
     c_token++;
@@ -5948,14 +6119,13 @@ prune_dataticks(struct ticmark *list)
 /* load TIC_SERIES definition */
 /* [start,]incr[,end] */
 static void
-load_tic_series(AXIS_INDEX axis)
+load_tic_series(struct axis *this_axis)
 {
     double start, incr, end;
     int incr_token;
+    struct ticdef *tdef = &(this_axis->ticdef);
 
-    struct ticdef *tdef = &axis_array[axis].ticdef;
-
-    GET_NUM_OR_TIME(start, axis);
+    start = get_num_or_time(this_axis);
 
     if (!equals(c_token, ",")) {
 	/* only step specified */
@@ -5965,14 +6135,14 @@ load_tic_series(AXIS_INDEX axis)
     } else {
 	c_token++;
 	incr_token = c_token;
-	GET_NUM_OR_TIME(incr, axis);
+	incr = get_num_or_time(this_axis);
 
 	if (!equals(c_token, ",")) {
 	    /* only step and increment specified */
 	    end = VERYLARGE;
 	} else {
 	    c_token++;
-	    GET_NUM_OR_TIME(end, axis);
+	    end = get_num_or_time(this_axis);
 	}
     }
 
@@ -6024,9 +6194,12 @@ new_text_label(int tag)
  * Parse the sub-options for label style and placement.
  * This is called from set_label, and from plot2d and plot3d
  * to handle options for 'plot with labels'
+ * Note: ndim = 2 means we are inside a plot command,
+ *       ndim = 3 means we are inside an splot command
+ *       ndim = 0 in a set command
  */
 void
-parse_label_options( struct text_label *this_label, TBOOLEAN in_plot )
+parse_label_options( struct text_label *this_label, int ndim)
 {
     struct position pos;
     char *font = NULL;
@@ -6036,7 +6209,7 @@ parse_label_options( struct text_label *this_label, TBOOLEAN in_plot )
 	set_rot = FALSE, set_font = FALSE, set_offset = FALSE,
 	set_layer = FALSE, set_textcolor = FALSE, set_hypertext = FALSE;
     int layer = LAYER_BACK;
-    TBOOLEAN axis_label = (this_label->tag == -2);
+    TBOOLEAN axis_label = (this_label->tag <= NONROTATING_LABEL_TAG);
     TBOOLEAN hypertext = FALSE;
     struct position offset = default_offset;
     t_colorspec textcolor = {TC_DEFAULT,0,0.0};
@@ -6046,7 +6219,7 @@ parse_label_options( struct text_label *this_label, TBOOLEAN in_plot )
    /* Now parse the label format and style options */
     while (!END_OF_COMMAND) {
 	/* get position */
-	if (!in_plot && !set_position && equals(c_token, "at") && !axis_label) {
+	if ((ndim == 0) && !set_position && equals(c_token, "at") && !axis_label) {
 	    c_token++;
 	    get_position(&pos);
 	    set_position = TRUE;
@@ -6082,13 +6255,15 @@ parse_label_options( struct text_label *this_label, TBOOLEAN in_plot )
 	    if (equals(c_token, "by")) {
 		c_token++;
 		rotate = int_expression();
+		if (this_label->tag == ROTATE_IN_3D_LABEL_TAG)
+		    this_label->tag = NONROTATING_LABEL_TAG;
 	    } else if (almost_equals(c_token,"para$llel")) {
 		if (this_label->tag >= 0)
 		    int_error(c_token,"invalid option");
 		c_token++;
 		this_label->tag = ROTATE_IN_3D_LABEL_TAG;
 	    } else if (almost_equals(c_token,"var$iable")) {
-		if (in_plot)	/* only in 2D plot with labels */
+		if (ndim == 2)	/* only in 2D plot with labels */
 		    this_label->tag = VARIABLE_ROTATE_LABEL_TAG;
 		else
 		    set_rot = FALSE;
@@ -6101,7 +6276,7 @@ parse_label_options( struct text_label *this_label, TBOOLEAN in_plot )
 	    c_token++;
 	    set_rot = TRUE;
 	    if (this_label->tag == ROTATE_IN_3D_LABEL_TAG)
-		this_label->tag = NONROTATABLE_LABEL_TAG;
+		this_label->tag = NONROTATING_LABEL_TAG;
 	    continue;
 	}
 
@@ -6131,7 +6306,7 @@ parse_label_options( struct text_label *this_label, TBOOLEAN in_plot )
 	}
 
 	/* get front/back (added by JDP) */
-	if (!in_plot && !set_layer && !axis_label) {
+	if ((ndim == 0) && !set_layer && !axis_label) {
 	    if (equals(c_token, "back")) {
 		layer = LAYER_BACK;
 		c_token++;
@@ -6177,7 +6352,7 @@ parse_label_options( struct text_label *this_label, TBOOLEAN in_plot )
 
 	if (! set_offset && almost_equals(c_token, "of$fset")) {
 	    c_token++;
-	    get_position_default(&offset,character);
+	    get_position_default(&offset, character, ndim);
 	    set_offset = TRUE;
 	    continue;
 	}
@@ -6285,8 +6460,10 @@ parse_histogramstyle( histogram_style *hs,
 	    set_xyzlabel(&title_specs);
 	    free(title_specs.text);
 	    title_specs.text = NULL;
-	    free(hs->title.font);
-	    hs->title.font = NULL;
+	    if (hs->title.font) {
+		free(hs->title.font);
+		hs->title.font = NULL;
+	    }
 	    hs->title = title_specs;
 	} else if ((equals(c_token,"lw") || almost_equals(c_token,"linew$idth"))
 		  && (hs->type == HT_ERRORBARS)) {
@@ -6298,6 +6475,46 @@ parse_histogramstyle( histogram_style *hs,
 	    /* We hit something unexpected */
 	    break;
     }
+}
+
+/*
+ * set pm3d lighting {primary <fraction>} {specular <fraction>}
+ */
+static void
+parse_lighting_options()
+{
+    c_token++;
+
+    /* TODO: Add separate "set" commands for these */
+    pm3d_shade.ambient = 1.0;
+    pm3d_shade.Phong = 5.0;	/* Phong exponent */
+    pm3d_shade.rot_x = 45;	/* illumination angle */
+    pm3d_shade.rot_z = -45;	/* illumination angle */
+    pm3d_shade.fixed = TRUE;	/* TRUE means the light does not rotate */
+
+    /* This is what you get from simply "set pm3d lighting" */
+    pm3d_shade.strength = 0.5;	/* contribution of primary light source */
+    pm3d_shade.spec = 0.2;	/* contribution of specular highlights */
+
+    while (!END_OF_COMMAND) {
+	if (almost_equals(c_token,"primary")) {
+	    c_token++;
+	    pm3d_shade.strength = real_expression();
+	    pm3d_shade.strength = clip_to_01(pm3d_shade.strength);
+	    continue;
+	}
+	
+	if (almost_equals(c_token,"spec$ular")) {
+	    c_token++;
+	    pm3d_shade.spec = real_expression();
+	    pm3d_shade.spec = clip_to_01(pm3d_shade.spec);
+	    continue;
+	}
+
+	break;
+    }
+
+    c_token--;
 }
 
 /* process 'set style parallelaxis' command */
@@ -6326,11 +6543,17 @@ rrange_to_xy()
 {
     double min;
 
-    /* An inverted R axis makes no sense */
+    /* An inverted R axis makes no sense in most cases.
+     * One reasonable use is to project altitude/azimuth spherical coordinates
+     * so that the zenith (azimuth = 90) is in the center and the horizon
+     * (azimuth = 0) is at the perimeter.
+     */
     if (R_AXIS.set_min > R_AXIS.set_max) {
-	min = R_AXIS.set_max;
-	R_AXIS.set_max = R_AXIS.set_min;
-	R_AXIS.set_min = min;
+	if (nonlinear(&R_AXIS))
+	    int_error(NO_CARET, "cannot invert nonlinear R axis");
+	inverted_raxis = TRUE;
+    } else {
+	inverted_raxis = FALSE;
     }
 
     if (R_AXIS.set_autoscale & AUTOSCALE_MIN)
@@ -6343,11 +6566,16 @@ rrange_to_xy()
     } else {
 	X_AXIS.set_autoscale = AUTOSCALE_NONE;
 	Y_AXIS.set_autoscale = AUTOSCALE_NONE;
-	if (R_AXIS.log)
+	if (nonlinear(&R_AXIS))
+	    X_AXIS.set_max = eval_link_function(R_AXIS.linked_to_primary, R_AXIS.set_max)
+			   - eval_link_function(R_AXIS.linked_to_primary, min);
+	else if (R_AXIS.log)
+	    /* NB: Can't get here if "set log" is implemented as nonlinear */
 	    X_AXIS.set_max =  AXIS_DO_LOG(POLAR_AXIS, R_AXIS.set_max)
 			    - AXIS_DO_LOG(POLAR_AXIS, min);
 	else
-	    X_AXIS.set_max = R_AXIS.set_max - min;
+	    X_AXIS.set_max = fabs(R_AXIS.set_max - min);
+
 	Y_AXIS.set_max = X_AXIS.set_max;
 	Y_AXIS.set_min = X_AXIS.set_min = -X_AXIS.set_max;
     }

@@ -1,5 +1,5 @@
 #ifndef lint
-static char *RCSid() { return RCSid("$Id: tables.c,v 1.133.2.7 2016/10/21 21:00:08 sfeam Exp $"); }
+static char *RCSid() { return RCSid("$Id: tables.c,v 1.155 2017/05/20 01:27:30 sfeam Exp $"); }
 #endif
 
 /* GNUPLOT - tables.c */
@@ -56,9 +56,12 @@ const struct gen_ftable command_ftbl[] =
 #ifdef USE_MOUSE
     { "bi$nd", bind_command },
 #endif
+    { "array", array_command },
+    { "break", break_command },
     { "ca$ll", call_command },
     { "cd", changedir_command },
     { "cl$ear", clear_command },
+    { "continue", continue_command },
     { "do", do_command },
     { "eval$uate", eval_command },
     { "ex$it", exit_command },
@@ -89,6 +92,7 @@ const struct gen_ftable command_ftbl[] =
     { "st$ats", stats_command },
     { "sy$stem", system_command },
     { "test", test_command },
+    { "tog$gle", toggle_command },
     { "und$efine", undefine_command },
     { "uns$et", unset_command },
     { "up$date", update_command },
@@ -115,6 +119,7 @@ const struct gen_table plot_axes_tbl[] =
 const struct gen_table plot_smooth_tbl[] =
 {
     { "a$csplines", SMOOTH_ACSPLINES },
+    { "bins", SMOOTH_BINS },
     { "b$ezier", SMOOTH_BEZIER },
     { "c$splines", SMOOTH_CSPLINES },
     { "s$bezier", SMOOTH_SBEZIER },
@@ -125,6 +130,7 @@ const struct gen_table plot_smooth_tbl[] =
     { "k$density", SMOOTH_KDENSITY },
     { "cn$ormal", SMOOTH_CUMULATIVE_NORMALISED },
     { "mcs$plines", SMOOTH_MONOTONE_CSPLINE },
+    { "fnor$mal", SMOOTH_FREQUENCY_NORMALISED },
     { NULL, SMOOTH_NONE }
 };
 
@@ -144,10 +150,11 @@ const struct gen_table dgrid3d_mode_tbl[] =
 /* 'save' command */
 const struct gen_table save_tbl[] =
 {
-    { "f$unctions", SAVE_FUNCS },
-    { "s$et", SAVE_SET },
-    { "t$erminal", SAVE_TERMINAL },
-    { "v$ariables", SAVE_VARS },
+    { "fit", SAVE_FIT },
+    { "fun$ctions", SAVE_FUNCS },
+    { "set", SAVE_SET },
+    { "ter$minal", SAVE_TERMINAL },
+    { "var$iables", SAVE_VARS },
     { NULL, SAVE_INVALID }
 };
 
@@ -179,6 +186,7 @@ const struct gen_table set_tbl[] =
     { "du$mmy", S_DUMMY },
     { "enc$oding", S_ENCODING },
     { "dec$imalsign", S_DECIMALSIGN },
+    { "errorbars", S_BARS },
     { "fit", S_FIT },
     { "font$path", S_FONTPATH },
     { "fo$rmat", S_FORMAT },
@@ -189,6 +197,7 @@ const struct gen_table set_tbl[] =
     { "historysize", S_HISTORYSIZE },	/* Deprecated */
     { "his$tory", S_HISTORY },
     { "is$osamples", S_ISOSAMPLES },
+    { "jitter", S_JITTER },
     { "k$ey", S_KEY },
     { "keyt$itle", S_KEY },
     { "la$bel", S_LABEL },
@@ -229,9 +238,10 @@ const struct gen_table set_tbl[] =
     { "mzt$ics", S_MZTICS },
     { "nomzt$ics", S_NOMZTICS },
     { "mrt$ics", S_MRTICS },
-    { "nomrt$ics", S_NOMRTICS },
+    { "mtt$ics", S_MTTICS },
     { "mcbt$ics", S_MCBTICS },
     { "nomcbt$ics", S_NOMCBTICS },
+    { "nonlinear", S_NONLINEAR },
     { "of$fsets", S_OFFSETS },
     { "or$igin", S_ORIGIN },
     { "o$utput", SET_OUTPUT },
@@ -256,6 +266,7 @@ const struct gen_table set_tbl[] =
     { "table", S_TABLE },
     { "t$erminal", S_TERMINAL },
     { "termopt$ions", S_TERMOPTIONS },
+    { "theta$0", S_THETA },
     { "ti$cs", S_TICS },
     { "ticsc$ale", S_TICSCALE },
     { "ticsl$evel", S_TICSLEVEL },
@@ -280,6 +291,7 @@ const struct gen_table set_tbl[] =
     { "y2l$abel", S_Y2LABEL },
     { "zl$abel", S_ZLABEL },
     { "cbl$abel", S_CBLABEL },
+    { "rlabel", S_RLABEL },
 
     { "xti$cs", S_XTICS },
     { "noxti$cs", S_NOXTICS },
@@ -292,7 +304,7 @@ const struct gen_table set_tbl[] =
     { "zti$cs", S_ZTICS },
     { "nozti$cs", S_NOZTICS },
     { "rti$cs", S_RTICS },
-    { "norti$cs", S_NORTICS },
+    { "tti$cs", S_TTICS },
     { "cbti$cs", S_CBTICS },
     { "nocbti$cs", S_NOCBTICS },
 
@@ -384,6 +396,7 @@ const struct gen_table set_key_tbl[] =
     { "at", S_KEY_MANUAL },
     { "ins$ide", S_KEY_INSIDE },
     { "o$utside", S_KEY_OUTSIDE },
+    { "fix$ed", S_KEY_FIXED },
     { "tm$argin", S_KEY_TMARGIN },
     { "bm$argin", S_KEY_BMARGIN },
     { "lm$argin", S_KEY_LMARGIN },
@@ -504,7 +517,9 @@ const struct gen_table set_pm3d_tbl[] =
     { "noe$xplicit",	S_PM3D_NOEXPLICIT },
     { "noi$mplicit",	S_PM3D_NOIMPLICIT },
     { "e$xplicit",	S_PM3D_EXPLICIT },
-    { "corners2c$olor",S_PM3D_WHICH_CORNER },
+    { "corners2c$olor",	S_PM3D_WHICH_CORNER },
+    { "light$ing",	S_PM3D_LIGHTING_MODEL },
+    { "nolight$ing",	S_PM3D_NOLIGHTING_MODEL },
     { NULL, S_PM3D_INVALID }
 };
 
@@ -706,6 +721,7 @@ const struct gen_table plotstyle_tbl[] =
     { "sur$face", SURFACEGRID },
     { "parallel$axes", PARALLELPLOT },
     { "table", TABLESTYLE },
+    { "zerror$fill", ZERRORFILL },
     { NULL, PLOT_STYLE_NONE }
 };
 

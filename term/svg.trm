@@ -1,5 +1,5 @@
 /* Hello, Emacs, this is -*-C-*-
- * $Id: svg.trm,v 1.170.2.5 2017/02/21 06:01:12 sfeam Exp $
+ * $Id: svg.trm,v 1.187 2017/02/20 19:38:03 sfeam Exp $
  */
 
 /*------------------------------------------------------------------------------------------------------------------------------------
@@ -892,31 +892,21 @@ SVG_write_preamble ()
  *	  Figure out the full URL to use for xlink:href="gnuplot_svg.js"
  */
     if (SVG_scriptdir == NULL) {
-	char *svg_default_jsdir = "";
 #ifdef GNUPLOT_JS_DIR
-# if defined(_Windows)
-	/* retrieve path relative to the gnuplot executable,
-	 * whose path is in szModuleName (winmain.c) */
-	/* EAM FIXME: memory leak */
-	svg_default_jsdir = gp_alloc(strlen((char*) szPackageDir)
-			+ strlen(GNUPLOT_JS_DIR) + 2, "jsdir");
-	strcpy(svg_default_jsdir, (char*) szPackageDir);
-	len = strlen(svg_default_jsdir);
-	if (*svg_default_jsdir && svg_default_jsdir[len-1] != '\\' && svg_default_jsdir[len-1] != '/')
-	    strcat(svg_default_jsdir, "\\");
-	/* GNUPLOT_JS_DIR is _relative_ path */
-	strcat(svg_default_jsdir, GNUPLOT_JS_DIR);
-# else /* !_Windows */
+# if defined(_WIN32)
+	SVG_scriptdir = RelativePathToGnuplot(GNUPLOT_JS_DIR);
+# else /* !_WIN32 */
 	/* use hardcoded _absolute_ path */
-	svg_default_jsdir = GNUPLOT_JS_DIR;
+	SVG_scriptdir = gp_strdup(GNUPLOT_JS_DIR);
 # endif
+#else
+	SVG_scriptdir = gp_strdup("");
 #endif /* GNUPLOT_JS_DIR */
-	SVG_scriptdir = gp_strdup(svg_default_jsdir);
     }
 
 #if !defined(VMS)
     len = strlen(SVG_scriptdir);
-# if defined(_Windows)
+# if defined(_WIN32)
     if (*SVG_scriptdir && SVG_scriptdir[len-1] != '\\' && SVG_scriptdir[len-1] != '/') {
 	SVG_scriptdir = gp_realloc(SVG_scriptdir, len+2, "jsdir");
 	if (SVG_scriptdir[len-1] == '\\') /* use backslash if used in jsdir, otherwise slash */
@@ -1138,8 +1128,8 @@ SVG_text ()
 	    fprintf(gpoutfile, "gnuplot_svg.plot_axis_rmin = %g;\n",
 		(R_AXIS.autoscale & AUTOSCALE_MIN) ? 0.0 : R_AXIS.set_min);
 	    fprintf(gpoutfile, "gnuplot_svg.plot_axis_rmax = %g;\n", R_AXIS.set_max);
-	    fprintf(gpoutfile, "gnuplot_svg.polar_theta0 = 0;\n");
-	    fprintf(gpoutfile, "gnuplot_svg.polar_sense = 1;\n");
+	    fprintf(gpoutfile, "gnuplot_svg.polar_theta0 = %d;\n", (int)theta_origin);
+	    fprintf(gpoutfile, "gnuplot_svg.polar_sense = %d;\n", (int)theta_direction);
 	}
 
 	if ((axis_array[SECOND_X_AXIS].ticmode & TICS_MASK) != NO_TICS) {
